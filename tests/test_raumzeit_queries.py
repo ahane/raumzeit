@@ -1,10 +1,10 @@
 from nose2.tools import *
 from raumzeit.core import Location, Happening, Person
-from raumzeit.queries import Happenings, Locations
+from raumzeit.collections import Happenings, Locations
 
 class FakeQuerier(object):
-        def get(self, location, before, after):
-            h = {'A': [Happening('H1', None, None, None), Happening('H2', None, None, None),
+        def get(self, location, after, before):
+            h = {'A': [Happening('H1', None, None, None,), Happening('H2', None, None, None),
                         Happening('H3', None, None, None), Happening('H3', None, None, None)],
                  'B': []}
             return h[location]
