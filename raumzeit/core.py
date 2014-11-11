@@ -4,10 +4,31 @@
 
 from collections import namedtuple
 
-Location = namedtuple('Location', ['name', 'lat', 'lon', 'address', 'desc'])
-Happening = namedtuple('Happening', ['name', 'start', 'end', 'desc'])
-Person = namedtuple('Person', ['name', 'desc'])
+Location = namedtuple('Location', ['name', 'lat', 'lon', 'details', 'dbinfo'])
+Happening = namedtuple('Happening', ['name', 'start', 'end', 'details', 'dbinfo'])
+SubHappening = namedtuple('SubHappening', ['name', 'start', 'end', 'details', 'dbinfo'])
 
+
+
+def in_timespan(happening, start, end):
+    """Check if a happening overlaps with a timespan."""
+
+    return timespans_overlap((happening.start, happening.end), (start, end))
+
+
+def timespans_overlap(start_end, other_start_end):
+    """Check if two timespans overlap."""
+
+    s1, e1 = start_end
+    s2, e2 = other_start_end
+
+    try:
+        assert s1 < e1
+        assert s2 < e2
+    except AssertionError:
+        raise ValueError('Timespans must begin before they end.')
+
+    return s1 < e2 and s2 < e1
 
 
 

@@ -1,45 +1,89 @@
-from nose2.tools import *
-from raumzeit.core import Location, Happening, Person
-
+import pytest
+from raumzeit.core import Location, Happening, SubHappening, timespans_overlap, in_timespan
+from datetime import datetime
 
     
 def test_location_init():
-    address = 'Rollbergstr. 1, Berlin'
-    desc = 'Fun Place!'
-    l = Location('SomeLocationName', 51.1, 13.1, address, desc)
+    details = 'Rollbergstr. 1, Berlin'
+    dbinfo = ('venue', 42)
+    l = Location('SomeLocationName', 51.1, 13.1, details, dbinfo)
     
     assert l.name == 'SomeLocationName'
     assert l.lat == 51.1
     assert l.lon == 13.1
-    assert l.address == address
-    assert l.desc == desc
+    assert l.details == details
+    assert l.dbinfo == dbinfo
 
 
 def test_happening_init():
     from datetime import datetime
     start = datetime(2014, 1, 1, 12)
     end = datetime(2014, 1, 1, 18)
-    desc = 'Fun Party!'
-    
-    h = Happening('SomeHappName', start, end, desc)
+    details = 'Some string or dict'
+    dbinfo = ('event', 51)
+    h = Happening('SomeHappName', start, end, details, dbinfo)
     
     assert h.name == 'SomeHappName'
     assert h.start == start
     assert h.end == end
-    assert h.desc == 'Fun Party!'
+    assert h.details == details
+    assert h.dbinfo == dbinfo
     
 
-# def test_add_location_to_happening():
-#     h = Happening('SomeHappName', None, None,  None)
-#     l = Location('SomeLocationName', None, None, None, None)
-
-#     h.set_location(l)
-
-#     assert h.location() == l
-
-def test_person_init():
-    desc = 'Some Artist'
-    p = Person('SomePersonName', desc)
+def test_subhappening_init():
+    details = 'Some Artist'
+    dbinfo = ('artist', 80)
+    start, end = None, None
+    p = SubHappening('SomePersonName', start, end, details, dbinfo)
 
     assert p.name == 'SomePersonName'
-    assert p.desc  == desc
+    assert p.start == None
+    assert p.end == None
+    assert p.details  == details
+    assert p.dbinfo == dbinfo
+
+def test_timepans_overlap():
+
+    jan = (datetime(2014, 1, 1), datetime(2014, 1, 31))
+    feb = (datetime(2014, 2, 1), datetime(2014, 2, 28))
+
+    in_jan = (datetime(2014, 1, 7), datetime(2014, 1, 14))
+    in_feb = (datetime(2014, 2, 7), datetime(2014, 2, 14))
+    in_both = (datetime(2014, 1, 15), datetime(2014, 1, 15))
+    before_both = (datetime(2013, 12, 1), datetime(2013, 12, 31))
+    after_both = (datetime(2014, 3, 1), datetime(2014, 3, 31))
+
+    assert timespans_overlap(jan, feb) == False
+    assert timespans_overlap(feb, jan) == False
+
+    assert timespans_overlap(jan, in_jan) == True
+    assert timespans_overlap(in_jan, jan) == True
+
+    assert timespans_overlap(feb, in_feb) == True
+    assert timespans_overlap(in_feb, feb) == True
+
+    assert timespans_overlap(before_both, feb) == False
+    assert timespans_overlap(jan, before_both) == False
+
+    assert timespans_overlap(after_both, feb) == False
+    assert timespans_overlap(jan, after_both) == False
+
+def test_timepans_overlap_exceptions():
+
+    corrupt_jan = (datetime(2014, 1, 31), datetime(2014, 1, 1))
+    feb = (datetime(2014, 2, 1), datetime(2014, 2, 28))
+
+    with pytest.raises(ValueError):
+        timespans_overlap(corrupt_jan, feb)
+
+def test_in_timespan():
+    a = Happening('a', datetime(2014, 1, 1), datetime(2014, 1, 7), None, None)
+    b = Happening('b', datetime(2014, 1, 25), datetime(2014, 2, 13), None, None)
+
+    jan = (datetime(2014, 1, 1), datetime(2014, 1, 31))
+    feb = (datetime(2014, 2, 1), datetime(2014, 2, 28))
+
+    assert in_timespan(a, jan[0], jan[1]) == True
+    assert in_timespan(a, feb[0], feb[1]) == False
+    assert in_timespan(b, jan[0], jan[1]) == True
+    assert in_timespan(b, feb[0], feb[1]) == True
