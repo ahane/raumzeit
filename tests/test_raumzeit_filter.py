@@ -15,6 +15,16 @@ class FakeEntityGenerator():
 
             locs[2]: [Happening('feb. C', datetime(2014, 2, 1), datetime(2014, 2, 28), None, None)]}
 
+    subhaps = {}
+    for l, happenings in haps.items():
+        for h in happenings:
+            subhaps[h] = []
+            subhaps[h].append(SubHappening(h.name+'-a', None, None, None, None))
+            subhaps[h].append(SubHappening(h.name+'-b', None, None, None, None))
+
+            #every happening gets two subhappenings with consecutive numbers
+            
+
     def all_locations(self):
         for l in self.locs:
             yield l
@@ -24,17 +34,22 @@ class FakeEntityGenerator():
             if in_timespan(h, start, end):
                 yield h
 
+    def subhappenings(self, happ):
+        subhaps = self.subhaps[happ]
+        for subhap in subhaps:
+            yield subhap
+
 
 def test_timeawarelayer_init():
-    entity_generator = FakeEntityGenerator()
-    timelayer = TimeAwareLayer(entity_generator)
+    entity_generators = FakeEntityGenerator()
+    timelayer = TimeAwareLayer(entity_generators)
     start = datetime(2014, 1, 1)
     end = datetime(2014, 1, 20)
     timelayer.set_timespan(start, end)
 
     assert timelayer.start == start
     assert timelayer.end == end
-    assert timelayer._entity_generator == entity_generator
+    assert timelayer._entity_generators == entity_generators
 
     
 
@@ -71,3 +86,93 @@ def test_timeawarelayer_timespan_change():
     assert len(active_locs) == 2
     assert active_locs[0].name == 'b'
     assert active_locs[1].name == 'c'
+
+def test_happenings():
+
+    entity_generator = FakeEntityGenerator()
+    timelayer = TimeAwareLayer(entity_generator)
+    
+    start_a = datetime(2014, 1, 1)
+    end_a = datetime(2014, 1, 20)
+    timelayer.set_timespan(start_a, end_a)
+
+    active_haps = list(timelayer._all_active_happenings())
+    assert len(active_haps) == 2
+    assert active_haps[0].name == 'jan. A'
+    assert active_haps[1].name == 'jan. B'
+
+    hap_a = active_haps[0]
+    subhaps_a = list(timelayer._subhappenings(hap_a))
+    assert len(subhaps_a) == 2
+    assert subhaps_a[0].name == 'jan. A-a'
+    assert subhaps_a[1].name == 'jan. A-b'
+
+    hap_b = active_haps[1]
+    subhaps_b = list(timelayer._subhappenings(hap_b))
+    assert len(subhaps_b) == 2
+    assert subhaps_b[0].name == 'jan. B-a'
+    assert subhaps_b[1].name == 'jan. B-b'
+
+    #Test the tupelized version of the two functions above
+    active_locations = list(timelayer._active_locations())
+    haps_subs = [list(timelayer._active_happenings_subs(l)) for l in active_locations]
+    assert len(haps_subs) == 2
+    hap_subs_a = haps_subs[0]
+    hap_subs_b = haps_subs[1]
+    
+    assert type(hap_subs_a) == list
+    assert len(hap_subs_a) == 1
+    
+    assert type(hap_subs_b) == list
+    assert len(hap_subs_b) == 1
+
+    hap_sub_a = hap_subs_a[0]
+    hap_sub_b = hap_subs_b[0]
+
+    assert type(hap_sub_a) == tuple
+    assert type(hap_sub_b) == tuple
+
+    assert hap_sub_a[0].name == 'jan. A'
+    assert hap_sub_b[0].name == 'jan. B'
+
+    subs_a = list(hap_sub_a[1])
+    subs_b = list(hap_sub_b[1])
+    assert len(subs_a) == 2
+    assert subs_a[0].name == 'jan. A-a'
+    assert subs_a[1].name == 'jan. A-b'
+
+    assert len(subs_b) == 2
+    assert subs_b[0].name == 'jan. B-a'
+    assert subs_b[1].name == 'jan. B-b'
+
+def test_concatenating():
+    
+    entity_generator = FakeEntityGenerator()
+    timelayer = TimeAwareLayer(entity_generator)
+    start_a = datetime(2014, 1, 1)
+    end_a = datetime(2014, 1, 20)
+    timelayer.set_timespan(start_a, end_a)
+
+    locations = []
+    happenings = []
+    subhappenings = []
+    for location, rich_happenings in timelayer.active_locations_happenings():
+        locations.append(location)
+        for happening, subhappenings in rich_happenings:
+            happenings.append(happening)
+            for subhap in subhappenings:
+                subhappenings.append(subhap)
+
+    assert len(locations) == 2
+    assert locations[0].name == 'a'
+    assert locations[b].name == 'b'
+    
+    assert len(happenings) == 2
+    assert happenings[0].name == 'jan. A'
+    assert happenings[1].name == 'jan. B' 
+
+    assert len(subhappenings) == 4
+    assert subhappenings[0].name == 'jan. A-a'
+    assert subhappenings[1].name == 'jab. A-b'
+    assert subhappenings[0].name == 'jan. B-a'
+    assert subhappenings[1].name == 'jan. B-b'
