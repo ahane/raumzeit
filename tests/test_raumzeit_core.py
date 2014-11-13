@@ -1,46 +1,65 @@
 import pytest
 from raumzeit.core import Location, Happening, SubHappening, timespans_overlap, in_timespan
 from datetime import datetime
-
+from unittest.mock import patch
     
 def test_location_init():
-    details = 'Rollbergstr. 1, Berlin'
-    dbinfo = ('venue', 42)
-    l = Location('SomeLocationName', 51.1, 13.1, details, dbinfo)
+    props = 'Rollbergstr. 1, Berlin'
+    db_info = ('venue', 42)
+    l = Location('SomeLocationName', (51.1, 13.1), props, db_info)
     
     assert l.name == 'SomeLocationName'
     assert l.lat == 51.1
     assert l.lon == 13.1
-    assert l.details == details
-    assert l.dbinfo == dbinfo
+    assert l.props == props
+    assert l.db_info == db_info
+
+def test_location_setters():
+    props = 'Rollbergstr. 1, Berlin'
+    db_info = ('venue', 42)
+    l = Location('SomeLocationName', (51.1, 13.1), props, db_info)
+
+
+    assert len(l.happenings) == 0
+    with patch.object(Happening, 'set_location') as mock_method:
+        l.add_happening(Happening('a', None, None, None, None))
+    mock_method.assert_called_once_with(l)
+    assert len(l.happenings) == 1
+    assert l.happenings[0].name == 'a'
+
+    assert len(l.links) == 0
+    l.add_link('rel_a', 'http://ex.com')
+    assert len(l.links) == 1
+    assert assert l.links['rel_a'] == 'http://ex.com'
+    
 
 
 def test_happening_init():
     from datetime import datetime
     start = datetime(2014, 1, 1, 12)
     end = datetime(2014, 1, 1, 18)
-    details = 'Some string or dict'
-    dbinfo = ('event', 51)
-    h = Happening('SomeHappName', start, end, details, dbinfo)
+    props = 'Some string or dict'
+    db_info = ('event', 51)
+    h = Happening('SomeHappName', start, end, props, db_info)
     
     assert h.name == 'SomeHappName'
     assert h.start == start
     assert h.end == end
-    assert h.details == details
-    assert h.dbinfo == dbinfo
+    assert h.props == props
+    assert h.db_info == db_info
     
 
 def test_subhappening_init():
-    details = 'Some Artist'
-    dbinfo = ('artist', 80)
+    props = 'Some Artist'
+    db_info = ('artist', 80)
     start, end = None, None
-    p = SubHappening('SomePersonName', start, end, details, dbinfo)
+    p = SubHappening('SomePersonName', start, end, props, db_info)
 
     assert p.name == 'SomePersonName'
     assert p.start == None
     assert p.end == None
-    assert p.details  == details
-    assert p.dbinfo == dbinfo
+    assert p.props  == props
+    assert p.db_info == db_info
 
 def test_timepans_overlap():
 
