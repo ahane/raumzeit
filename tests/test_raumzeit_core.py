@@ -1,36 +1,48 @@
 import pytest
-from raumzeit.core import Location, Happening, SubHappening, timespans_overlap, in_timespan
+from raumzeit.core import Location, Happening, Person, timespans_overlap, in_timespan
 from datetime import datetime
 from unittest.mock import patch
     
-def test_location_init():
-    props = 'Rollbergstr. 1, Berlin'
-    db_info = ('venue', 42)
-    l = Location('SomeLocationName', (51.1, 13.1), props, db_info)
-    
-    assert l.name == 'SomeLocationName'
+def init_location():
+    name = 'SomeName'
+    lat = 51.1
+    lon = 13.1
+    slug = 'some_name'
+    db_info = {'table': 'venue'}
+    l = Location(name, lat, lon, slug, db_info)
+    return l
+def test_location_init():  
+    l = init_location()
+    assert l.name == 'SomeName'
     assert l.lat == 51.1
     assert l.lon == 13.1
-    assert l.props == props
-    assert l.db_info == db_info
+    assert l.links == {}
+    # Test the BaseResource implementation
+    assert l.slug == 'some_name'
+    assert l._db_info == {'table': 'venue'}
+    
+def test_assingment_location():
+    l = init_location()
+    # we can assing any random attribute we want
+    l.address = 'Some street 1'
+    assert l.address == 'Some street 1'
 
-def test_location_setters():
-    props = 'Rollbergstr. 1, Berlin'
-    db_info = ('venue', 42)
-    l = Location('SomeLocationName', (51.1, 13.1), props, db_info)
+    # we can add to the dicts
+    l.links['resident-advisor'] = 'http://ra.com/somesite'
+    assert l.links['resident-advisor'] == 'http://ra.com/somesite'
 
-
-    assert len(l.happenings) == 0
-    with patch.object(Happening, 'set_location') as mock_method:
-        l.add_happening(Happening('a', None, None, None, None))
-    mock_method.assert_called_once_with(l)
+def test_add_happening_to_location():
+    l = init_location()
+    h = Happening('n', 'start', 'stop', 'slug', 'dbinfo')
+    l.add_happening(h)
+    
     assert len(l.happenings) == 1
-    assert l.happenings[0].name == 'a'
+    assert list(l.happenings)[0].name == 'n'
 
-    assert len(l.links) == 0
-    l.add_link('rel_a', 'http://ex.com')
-    assert len(l.links) == 1
-    assert assert l.links['rel_a'] == 'http://ex.com'
+
+
+
+
     
 
 
@@ -38,28 +50,30 @@ def test_happening_init():
     from datetime import datetime
     start = datetime(2014, 1, 1, 12)
     end = datetime(2014, 1, 1, 18)
-    props = 'Some string or dict'
-    db_info = ('event', 51)
-    h = Happening('SomeHappName', start, end, props, db_info)
+    slug = 'some_event'
+    db_info = {'table': 'event'}
+    h = Happening('SomeHappName', start, end, slug, db_info)
     
     assert h.name == 'SomeHappName'
     assert h.start == start
     assert h.end == end
-    assert h.props == props
-    assert h.db_info == db_info
+    assert h.slug == 'some_event'
+    assert h.location == None
+    assert h.links == {}
+    assert h._db_info == {'table': 'event'}
     
 
-def test_subhappening_init():
-    props = 'Some Artist'
-    db_info = ('artist', 80)
-    start, end = None, None
-    p = SubHappening('SomePersonName', start, end, props, db_info)
+def test_person_init():
+    
+    slug = 'some_artist'
+    db_info = {'table': 'artist'}
+    p = Person('SomePersonName', slug, db_info)
 
     assert p.name == 'SomePersonName'
-    assert p.start == None
-    assert p.end == None
-    assert p.props  == props
-    assert p.db_info == db_info
+    assert p.slug  == slug
+    assert p._db_info == db_info
+    assert p.happenings == []
+    assert p.links == {}
 
 def test_timepans_overlap():
 

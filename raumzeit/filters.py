@@ -1,4 +1,4 @@
-from .core import Location, Happening, SubHappening
+from .core import Location, Happening, Person
 
 class TimeAwareLayer(object):
     """Aggregates locations which have happenings in a set timespan.
@@ -44,7 +44,7 @@ class TimeAwareLayer(object):
         """
         pass
         for location in self._active_locations():
-            for happening in self._active_happenings(location):
+            for happening_subs in _active_happenings_subs:
                 subhappenings = self._subhappenings(happening)
                 yield (happening, subhappenings)
 
