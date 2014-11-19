@@ -93,7 +93,7 @@ class Location(object):
 
     def add_happening(self, happening):
         self.happenings.append(happening)
-        happening.set_location(self)   
+        happening.location = self  
 
             
 class Happening(object):
@@ -107,19 +107,11 @@ class Happening(object):
         self.name = name
         self.start = start
         self.end = end
-        self.set_location(location)
+        self.location = location
         self.slug = slug
         self.links = links or {}
         self.persons = persons or []
         self._db_info = db_info
-
-
-    def set_location(self, location):
-        """Sets the location of the happenings.
-        Should this call add_happening() on the location?
-        The reverse is true
-        """
-        self.location = location
 
 
 class Person(object):
