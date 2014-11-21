@@ -135,14 +135,36 @@ def test_generate_slug():
     slugs = [NeoRepository.slugify(n) for n in names]
     assert slugs == ['kater-holzig', 'mop']
 
-    slug = Repository.slugify('Kater Holzig', hash_obj={'a': 123, 'b': 'ööö'})
-    assert slug == 'kater-holzig-ef5f1f3a92'
+    props = {'name': 'Kater Holzig', 'desc': 'Some Text'}
+    slug = Repository.slugify('Kater Holzig', props)
+    assert slug == 'kater-holzig-9b04172633'
 
-# def test_create():
-#     clear_db()
+def test_create():
+    clear_db()
+    graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
+    repo = NeoRepository(graph)
+    props = {'name': 'Kater Holzig', 'desc': 'Some Text'}
+    created_a = repo.create('Location', props)
 
-#     repo = NeoRepository(graph)
-#     props = {'name': 'Kater Holzig', 'desc': 'Some Text'}
-#     created_a = repo.create('Location', props)
+    assert len(created_a) == 4
+    assert created_a['slug'] == 'kater-holzig'
+    assert created_a['name'] == 'Kater Holzig'
+    assert created_a['desc'] == 'Some Text'
+    assert created_a['labels'] == {'Location'}
 
-#     assert created['slug'] == 
+    # check slug handling for duplicate names
+    created_b = repo.create('Location', props)
+    assert created_b['slug'] == 'kater-holzig-9b04172633'
+
+
+def test_get():
+    clear_db()
+
+    graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
+    repo = NeoRepository(graph)
+    props = {'name': 'Kater Holzig', 'desc': 'Some Text'}
+    created = repo.create('Location', props)
+
+    fetched = repo.get('Location', 'kater-holzig')
+
+    assert created == fetched

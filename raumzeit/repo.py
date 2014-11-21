@@ -1,4 +1,5 @@
 import py2neo
+from py2neo.cypher.error.schema import ConstraintViolation
 import re
 import hashlib
 from unicodedata import normalize as uni_normalize
@@ -26,9 +27,10 @@ class Repository(object):
         raise NotImplementedError
 
     @staticmethod
-    def slugify(text, delim='-', hash_obj=False, hash_chars=10, punct_re=_punct_re):
-        def calc_hash(obj):
-            bytes = uni_normalize('NFKD', str(obj)).encode('ascii', 'ignore')
+    def slugify(text, hash_dct=False, delim='-', hash_chars=10, punct_re=_punct_re):
+        def calc_hash(dct):
+            dct_str = str(sorted(dct.items()))
+            bytes = uni_normalize('NFKD', dct_str).encode('ascii', 'ignore')
             hash_key = hashlib.sha224(bytes).hexdigest()
             return hash_key
 
@@ -38,8 +40,8 @@ class Repository(object):
             if word:
                 result.append(word.decode('utf-8'))
 
-        if hash_obj:
-            result.append(calc_hash(hash_obj)[:hash_chars])
+        if hash_dct:
+            result.append(calc_hash(hash_dct)[:hash_chars])
 
         return delim.join(result)
 
@@ -69,9 +71,26 @@ class NeoRepository(Repository):
             rec = rec_list[0]
             return self._record_to_dict(rec)
 
-    def create(self, label, props):
+    def get(self, label, slug):
+        return self.get_one(label, {'slug': slug})
+
+    def create(self, label, props, **kwargs):
         """ Create a new sluggable entity """
-        pass
+
+        props_slug = props.copy()
+        props_slug['slug'] = self.slugify(props['name'])
+        param_q = self._dict_to_param_q(props_slug)
+        create_q = """CREATE (n:{l} {p}) return n""".format(l=label, p=param_q)
+
+        print(props)
+        try:
+            rec_list = self._graph.cypher.execute(create_q, parameters=props_slug)
+
+        except ConstraintViolation:
+            props_slug['slug'] = self.slugify(props['name'], props)
+            rec_list = self._graph.cypher.execute(create_q, parameters=props_slug)
+
+        return self._record_to_dict(rec_list[0])
 
     def get_or_create(self, label, props):
         """ Get or create a value node. """
@@ -104,7 +123,7 @@ class NeoRepository(Repository):
         
     @classmethod
     def _dict_to_param_q(cls, dct):
-        """ Compiles a string for parameterized queries. """
+        """ Compiles the properties part of a parameterized cypher query. """
         q = '{'
         for key, value in dct.items():
             q += key + ': ' + '{' + key + '}' + ', '
@@ -112,5 +131,5 @@ class NeoRepository(Repository):
         q += '}'
         return q
 
-    #def create(self, label, **kwargs):
+
 
