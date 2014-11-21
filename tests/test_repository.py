@@ -37,29 +37,28 @@ def test_repo_signatures():
     r = Repository()
     
     with pytest.raises(NotImplementedError):
-        r.get('location', 'kater123')
+        r.get('Location', 'kater123')
 
     with pytest.raises(NotImplementedError):
-        r.get_one('location', 'some query')
+        r.get_one('Location', {'field': 'value'})
 
     with pytest.raises(NotImplementedError):
-        r.iter_all('location')
+        r.iter_all('Location')
 
     with pytest.raises(NotImplementedError):
-        happenings = None
-        r.iter_joined('location', happenings)
+        r.iter_joined('Location', happenings='Happening')
 
     with pytest.raises(NotImplementedError):    
-        r.create('location', name='renate')
+        r.create('Location', name='renate')
     
 
 def test_casts():
     
-    node = py2neo.Node('LableA', 'LableB', prop_a=1, prop_b='foo')
+    node = py2neo.Node('LableA', prop_a=1, prop_b='foo')
     node_dict = NeoRepository._node_to_dict(node)
 
     assert len(node_dict) == 3
-    assert node_dict['labels'] == {'LableA', 'LableB'}
+    assert node_dict['_label'] == 'LableA'
     assert node_dict['prop_a'] == 1
     assert node_dict['prop_b'] == 'foo'
 
@@ -70,7 +69,7 @@ def test_casts():
 
     assert len(rec_dict) == 4
     assert rec_dict['col_a'] == 'bar'
-    assert rec_dict['labels'] == {'LableA', 'LableB'}
+    assert rec_dict['_label'] == 'LableA'
     assert rec_dict['prop_a'] == 1
     assert rec_dict['prop_b'] == 'foo'
 
@@ -97,15 +96,19 @@ def test_iter_all():
     for each in locations:
         assert len(each.items()) == 2
         assert 'name' in each.keys()
-        assert each['labels'] == {'Location'}
+        assert each['_label'] == 'Location'
 
 
 def test_compile_query():
-    d = {'a': 123, 'b': 'foo'}
-    s = NeoRepository._dict_to_param_q(d)
-
+    d = {'a': 123, 'b': 'foo', '_label': 'L'}
+    
+    props_pattern = NeoRepository._dict_to_param_properties_pattern(d)
     # our dict is accessed randomly so we test both orderings
-    assert (s == """{a: {a}, b: {b}}""" or s == """{b: {b}, a: {a}}""")
+    assert (props_pattern == "{a: {a}, b: {b}}" or props_pattern == "{b: {b}, a: {a}}")
+
+    node_pattern = NeoRepository._dict_to_param_node_pattern(d, 'n')
+    assert (node_pattern == "(n:L {a: {a}, b: {b}})" or node_pattern == "(n:L {b: {b}, a: {a}})")
+
 
 def test_get_one():
     clear_db()
@@ -119,7 +122,8 @@ def test_get_one():
     repo = NeoRepository(graph)
     one = repo.get_one('Location', {'name': 'renate'})
     assert one['name'] == 'renate'
-    assert one['labels'] == {'Location'}
+    assert one['_label'] == 'Location'
+    one_again = repo.get_one('Location', one)
 
 
     with pytest.raises(KeyError) as e:
@@ -150,12 +154,29 @@ def test_create():
     assert created_a['slug'] == 'kater-holzig'
     assert created_a['name'] == 'Kater Holzig'
     assert created_a['desc'] == 'Some Text'
-    assert created_a['labels'] == {'Location'}
+    assert created_a['_label'] == 'Location'
 
     # check slug handling for duplicate names
     created_b = repo.create('Location', props)
     assert created_b['slug'] == 'kater-holzig-9b04172633'
 
+# def test_create_connection():
+#     clear_db()
+#     repo = NeoRepository(graph)
+
+#     loc_props = {'name': 'Kater Holzig'}
+#     loc = repo.create('Location', loc_props)
+
+#     event_props = {'name': 'foo party', }
+#     event = repo.create('Happening', event_props)
+
+#     connection = repo._create_connection(event, 'HAPPENS_AT', loc)
+
+#     should_state = """CREATE 
+#                        (a:Happening {name:'foo party', slug: 'foo-party'})
+#                       -[:HAPPENS_AT]->
+#                       (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
+#     assert is_same_graph()
 
 def test_get():
     clear_db()
@@ -168,3 +189,21 @@ def test_get():
     fetched = repo.get('Location', 'kater-holzig')
 
     assert created == fetched
+
+# def test_get_joined():
+#     clear_db()
+
+#     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
+#     graph.
+#     repo = NeoRepository(graph)
+#     loc_props = {'name': 'Kater Holzig', }
+#     loc = repo.create('Location', loc_props)
+
+#     event_props = {'name': 'foo party', }
+#     event = repo.create('Happening', event_props, location=loc)
+
+#     should_state = """CREATE 
+#                       (a:Happening {name:'foo party', slug: 'foo-party'})
+#                       -[:HAPPENS_AT]->
+#                       (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
+#     assert is_same_graph()
