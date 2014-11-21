@@ -102,12 +102,15 @@ def test_iter_all():
 def test_compile_query():
     d = {'a': 123, 'b': 'foo', '_label': 'L'}
     
-    props_pattern = NeoRepository._dict_to_param_properties_pattern(d)
+    props_pattern = NeoRepository._dict_to_param_properties_pattern(d, 'n')
     # our dict is accessed randomly so we test both orderings
-    assert (props_pattern == "{a: {a}, b: {b}}" or props_pattern == "{b: {b}, a: {a}}")
+    assert (props_pattern == "{a: {n_a}, b: {n_b}}" or props_pattern == "{b: {n_b}, a: {n_a}}")
+
+    # ident_dict = NeoRepository._prepend_identifier(d, 'n')
+    # assert ident_dict == {'n_a': 123, 'n_b': 'foo', 'n__label': 'L'}
 
     node_pattern = NeoRepository._dict_to_param_node_pattern(d, 'n')
-    assert (node_pattern == "(n:L {a: {a}, b: {b}})" or node_pattern == "(n:L {b: {b}, a: {a}})")
+    assert (node_pattern == "(n:L {a: {n_a}, b: {n_b}})" or node_pattern == "(n:L {b: {n_b}, a: {n_a}})")
 
 
 def test_get_one():
@@ -190,20 +193,20 @@ def test_get():
 
     assert created == fetched
 
-# def test_get_joined():
-#     clear_db()
+# # def test_get_joined():
+# #     clear_db()
 
-#     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
-#     graph.
-#     repo = NeoRepository(graph)
-#     loc_props = {'name': 'Kater Holzig', }
-#     loc = repo.create('Location', loc_props)
+# #     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
+# #     graph.
+# #     repo = NeoRepository(graph)
+# #     loc_props = {'name': 'Kater Holzig', }
+# #     loc = repo.create('Location', loc_props)
 
-#     event_props = {'name': 'foo party', }
-#     event = repo.create('Happening', event_props, location=loc)
+# #     event_props = {'name': 'foo party', }
+# #     event = repo.create('Happening', event_props, location=loc)
 
-#     should_state = """CREATE 
-#                       (a:Happening {name:'foo party', slug: 'foo-party'})
-#                       -[:HAPPENS_AT]->
-#                       (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
-#     assert is_same_graph()
+# #     should_state = """CREATE 
+# #                       (a:Happening {name:'foo party', slug: 'foo-party'})
+# #                       -[:HAPPENS_AT]->
+# #                       (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
+# #     assert is_same_graph()

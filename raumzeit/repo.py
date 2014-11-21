@@ -59,9 +59,16 @@ class NeoRepository(Repository):
 
     def get_one(self, label, query):
         """ Get a unique enity that matches the query dictionary """
-        param_str = self._dict_to_param_properties_pattern(query)
-        match_one_q = """MATCH (n:{l} {q}) RETURN n""".format(l=label, q=param_str)
-        rec_list = self._graph.cypher.execute(match_one_q, parameters=query)
+        
+        query_dct = query.copy()
+        query_dct['_label'] = label
+
+        ident = 'n'
+        node_pattern = self._dict_to_param_node_pattern(query_dct, ident)
+        match_one_query = """MATCH {p} RETURN n""".format(p=node_pattern)
+        prefixed_query_dct = self._prepend_identifier(query_dct, ident)
+        rec_list = self._graph.cypher.execute(match_one_query, parameters=prefixed_query_dct)
+
         num_results = len(rec_list)
         if num_results == 0:
             raise KeyError('Not found')
@@ -81,24 +88,35 @@ class NeoRepository(Repository):
 
     def _create_entity(self, label, props):
 
-        props_slug = props.copy()
-        props_slug['slug'] = self.slugify(props['name'])
-        param_q = self._dict_to_param_properties_pattern(props_slug)
-        create_q = """CREATE (n:{l} {p}) return n""".format(l=label, p=param_q)
+        entity_dct = props.copy()
+        entity_dct['slug'] = self.slugify(props['name'])
+        entity_dct['_label'] = label
+
+        ident = 'n'
+        entity_pattern = self._dict_to_param_node_pattern(entity_dct, ident)
+        create_query = """CREATE {p} return n""".format(p=entity_pattern)
+        
 
         try:
-            rec_list = self._graph.cypher.execute(create_q, parameters=props_slug)
+            params_dict = self._prepend_identifier(entity_dct, ident)
+            rec_list = self._graph.cypher.execute(create_query, parameters=params_dict)
 
         except ConstraintViolation:
-            props_slug['slug'] = self.slugify(props['name'], props)
-            rec_list = self._graph.cypher.execute(create_q, parameters=props_slug)
+            entity_dct['slug'] = self.slugify(props['name'], props)
+            params_dict = self._prepend_identifier(entity_dct, ident)
+            rec_list = self._graph.cypher.execute(create_query, parameters=params_dict)
 
+        assert len(rec_list) == 1
         return self._record_to_dict(rec_list[0])
 
-    # def _create_connection(self, from, label, to, props=None):
-    #     """ Creates an edge between two existing nodes `from` and `to`. """
-    #     """MATCH (n:Other {name: 'a'}), (m:Other {name: 'b'}) MERGE (n)-[:AA]->(b)"""
-    #     cypher.execute()
+    def _create_connection(self, frm, label, to, props=None):
+        """ Creates an edge between two existing nodes `frm` and `to`. """
+        """MATCH (n:Other {name: 'a'}), (m:Other {name: 'b'}) MERGE (n)-[:AA]->(b)"""
+        assert '_label' in frm.keys()
+        assert '_label' in to.keys()
+        from_pattern = self._dict_to_param_node_pattern(frm, 'from')
+        to_pattern = self._dict_to_param_node_pattern(to, 'tp')
+        cypher.execute()
 
     def get_or_create(self, label, props):
         """ Get or create a value node. """
@@ -131,7 +149,7 @@ class NeoRepository(Repository):
         return node_dict
         
     @classmethod
-    def _dict_to_param_properties_pattern(cls, dct):
+    def _dict_to_param_properties_pattern(cls, dct, ident):
         """ Compiles the properties part of a parameterized cypher query.
         Example:
         >>> dct = {'slug': 'foo', 'name': 'Foo'}
@@ -141,21 +159,31 @@ class NeoRepository(Repository):
         p = '{'
         for key, value in dct.items():
             if key[0] != '_':
-                p += key + ': ' + '{' + key + '}' + ', '
+                p += key + ': ' + '{' + ident + '_' + key + '}' + ', '
         p = p[:-2] #remove last ', '
         p += '}'
         return p
 
     @classmethod
-    def _dict_to_param_node_pattern(cls, dct, identifier):
+    def _dict_to_param_node_pattern(cls, dct, ident):
         """ Compiles the node descriptor part of a cypher query.
         Example:
         >>> dct = {'slug': 'foo', 'name': 'Foo', '_label': 'Happening'}
         >>> node_desc = _dict_to_node_cypher(dct, 'foo')
         >>> assert node_desc == '(foo: Happening {slug: {slug}, name: {name}})'
         """
-        p = '(' + str(identifier) + ':' + dct['_label'] + ' '
-        p += cls._dict_to_param_properties_pattern(dct) + ')'
-        return p
+        label_key = '_label'
+        #ident_dct = cls._prepend_identifier(dct)
+        pattern = '(' + ident + ':' + dct[label_key] + ' '
+        pattern += cls._dict_to_param_properties_pattern(dct, ident) + ')'
+        return pattern
 
-
+    @classmethod
+    def _prepend_identifier(cls, dct, ident):
+        """ Adds an identifier to the keys of a dict so it can be used in a parameterized query.
+        Example:
+        >>> dct = {'slug', 'foo', 'name': 'Foo'}
+        >>> dct_ident = _prepend_identifier(dct, 'n')
+        >>> assert dct_ident == {'n_slug': 'foo', 'n_name': 'Foo'}
+        """
+        return {ident + '_' + k: v for k, v in dct.items()}
