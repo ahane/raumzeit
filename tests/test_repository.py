@@ -204,11 +204,26 @@ def test_get_joined():
     #event = repo.create('Happening', event_props, location=loc)
     repo.create('Happening', event_props)
 
+    repo.create('Artist', {'name': 'DJ1'})
+    repo.create('Artist', {'name': 'DJ2'})
+
     repo._create_connection('Happening', 'foo-party', 'HAPPENS_AT', 'Location', 'kater-holzig')
+    repo._create_connection('Artist', 'dj1', 'PERFORMS_AT', 'Happening', 'foo-party')
+    repo._create_connection('Artist', 'dj2', 'PERFORMS_AT', 'Happening', 'foo-party')
 
+    joined_loc = repo.get_joined('Happening', 'foo-party', 'location')
+    assert joined_loc['slug'] =='foo-party'
+    assert joined_loc['location']['slug'] == 'kater-holzig'
 
-    joined = repo.get_joined('Happening', 'foo-party', 'HAPPENS_AT')
+    joined_art = repo.get_joined('Happening', 'foo-party', 'artists')
+    assert joined_loc['slug'] =='foo-party'
+    assert len(joined_art['artists'])  == 2
+    artist_slugs = set([a['slug'] for a in joined_art['artists']])
+    assert 'dj1' in artist_slugs
+    assert 'dj2' in artist_slugs
 
-    assert joined['HAPPENS_AT']['slug'] == 'Kater Holzig'
+    # Next up!
+    joined_both = repo.get_joined('Happening', 'foo-party', 'artists', 'location')
     
-    assert is_same_graph()
+    
+    

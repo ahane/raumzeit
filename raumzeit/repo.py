@@ -1,12 +1,13 @@
 import py2neo
 from py2neo import Node, Relationship
-from py2neo.cypher.error.schema import ConstraintViolation
 from py2neo.error import GraphError
 import re
 import hashlib
 from unicodedata import normalize as uni_normalize
 
 _punct_re = re.compile(r"""[\t !"#$%&\'()*\-/<=>?@\[\\\]^_`{|},.]+""")
+
+
 
 class Repository(object):
 
@@ -49,6 +50,9 @@ class Repository(object):
 
 class NeoRepository(Repository):
 
+    REL_TO_ATTR = {'HAPPENS_AT': 'location', 'PERFORMS_AT': 'artists'}
+    ATTR_TO_REL = {v: k for k, v in REL_TO_ATTR.items()}
+
     def __init__(self, graph):
         self._graph = graph
 
@@ -88,6 +92,38 @@ class NeoRepository(Repository):
     def _get(self, label, slug):
         return self._get_one(label, 'slug', slug)
 
+    def get_joined(self, label, slug, rel_attr):
+        """ Returns an entity dict with another entity embedded in it """
+        
+        rel_label = self.ATTR_TO_REL[rel_attr]
+        nodes = self._get_joined(label, slug, rel_label)
+
+        if len(nodes) == 0:
+            raise KeyError("No relationship found with label {rel}".format(rel=rel_label))
+        elif len(nodes) == 1:
+            child_dict = self._node_to_dict(nodes[0][1])
+        else:
+            child_dict = [self._node_to_dict(e_node) for s_node, e_node in nodes]
+
+        parent_dict = self._node_to_dict(nodes[0][0])
+        parent_dict[rel_attr] = child_dict
+        return parent_dict
+
+    def _get_joined(self, start_label, slug, rel_label):
+        start_node = self._get(start_label, slug)
+        rels = list(self._graph.match(start_node, rel_label, bidirectional=True))
+        
+        #handle bidirectionality
+        if start_node == rels[0].start_node:
+            return [(start_node, rel.end_node) for rel in rels]
+        else:
+            return [(start_node, rel.start_node) for rel in rels]
+
+#    def iter_joined(self, label, slug, *rel_attrs):
+#        rel_labels = [self.ATTR_TO_REL[a] for a in rel_attrs]
+
+
+
     def create(self, label, props, **kwargs):
         """ Create a new sluggable entity """
         return self._node_to_dict(self._create_entity(label, props))
@@ -119,8 +155,6 @@ class NeoRepository(Repository):
         props = {} if props is None else props
         from_node = self._get(from_label, from_slug)
         to_node = self._get(to_label, to_slug)
-        print(type(from_node))
-        print(type(to_node))
         rel = Relationship(from_node, rel_label, to_node, **props)
         created_rel, = self._graph.create(rel)
 
@@ -168,44 +202,4 @@ class NeoRepository(Repository):
         node_dict['_label'] = list(node.labels)[0]
         return node_dict
         
-    @classmethod
-    def _compile_props_pattern(cls, dct, ident=None):
-        """ Compiles the properties part of a parameterized cypher query.
-        Example:
-        >>> dct = {'slug': 'foo', 'name': 'Foo'}
-        >>> param_cypher = _compile_props_pattern(dct)
-        >>> assert param_cypher == '{slug: {slug}, name: {name}}'
-        """
-        prefix = '' if ident is None else ident + '_'
-        p = '{'
-        for key, value in dct.items():
-            if key[0] != '_':
-                p += key + ': ' + '{' + prefix + key + '}' + ', '
-        p = p[:-2] #remove last ', '
-        p += '}'
-        return p
-
-    @classmethod
-    def _compile_node_pattern(cls, dct, label, ident=None):
-        """ Compiles the node descriptor part of a cypher query.
-        Example:
-        >>> dct = {'slug': 'foo', 'name': 'Foo', '_label': 'Happening'}
-        >>> node_desc = _dict_to_node_cypher(dct, 'foo')
-        >>> assert node_desc == '(foo: Happening {slug: {slug}, name: {name}})'
-        """
-        
-        props_pattern = cls._compile_props_pattern(dct, ident)
-        identifier = 'n' if ident is None else ident
-        pattern = '(' + identifier + ':' + label + ' '
-        pattern += props_pattern + ')'
-        return pattern, identifier
-
-    @classmethod
-    def _prepend_identifier(cls, dct, ident):
-        """ Adds an identifier to the keys of a dict so it can be used in a parameterized query.
-        Example:
-        >>> dct = {'slug', 'foo', 'name': 'Foo'}
-        >>> dct_ident = _prepend_identifier(dct, 'n')
-        >>> assert dct_ident == {'n_slug': 'foo', 'n_name': 'Foo'}
-        """
-        return {ident + '_' + k: v for k, v  in dct.items()}
+    
