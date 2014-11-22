@@ -102,16 +102,20 @@ def test_iter_all():
 def test_compile_query():
     d = {'a': 123, 'b': 'foo', '_label': 'L'}
     
-    props_pattern = NeoRepository._dict_to_param_properties_pattern(d, 'n')
+    props_pattern = NeoRepository._compile_props_pattern(d, 'n')
     # our dict is accessed randomly so we test both orderings
     assert (props_pattern == "{a: {n_a}, b: {n_b}}" or props_pattern == "{b: {n_b}, a: {n_a}}")
 
     # ident_dict = NeoRepository._prepend_identifier(d, 'n')
     # assert ident_dict == {'n_a': 123, 'n_b': 'foo', 'n__label': 'L'}
 
-    node_pattern = NeoRepository._dict_to_param_node_pattern(d, 'n')
-    assert (node_pattern == "(n:L {a: {n_a}, b: {n_b}})" or node_pattern == "(n:L {b: {n_b}, a: {n_a}})")
+    node_pattern, ident = NeoRepository._compile_node_pattern(d, 'L')
+    assert (node_pattern == "(n:L {a: {a}, b: {b}})" or node_pattern == "(n:L {b: {b}, a: {a}})")
+    assert ident == 'n'
 
+    node_pattern2, ident = NeoRepository._compile_node_pattern(d, 'L', 'name')
+    assert (node_pattern2 == "(name:L {a: {name_a}, b: {name_b}})" or node_pattern2 == "(name:L {b: {name_b}, a: {name_a}})")
+    assert ident == 'name'
 
 def test_get_one():
     clear_db()
