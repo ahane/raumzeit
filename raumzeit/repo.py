@@ -1,5 +1,7 @@
 import py2neo
+from py2neo import Node, Relationship
 from py2neo.cypher.error.schema import ConstraintViolation
+from py2neo.error import GraphError
 import re
 import hashlib
 from unicodedata import normalize as uni_normalize
@@ -50,55 +52,79 @@ class NeoRepository(Repository):
     def __init__(self, graph):
         self._graph = graph
 
-    def iter_all(self, label):
+    def iter_all_transaction(self, label):
+        """ Deprecated"""
         """ Iterate over all entities for a given label """
         match_label_q = """MATCH (n:{l}) RETURN n""".format(l=label)
         record_stream = self._graph.cypher.stream(match_label_q)
         for record in record_stream:
             yield self._record_to_dict(record)
 
-    def get_one(self, label, match_dict):
-        """ Get a unique enity that matches the query dictionary """
-                
-        node_pattern, ident = self._compile_node_pattern(match_dict, label)
-        get_one_cypher = """MATCH {p} RETURN {ident}""".format(p=node_pattern, ident=ident)
-        record_list = self._execute(get_one_cypher, parameters=match_dict)
+    def iter_all(self, label):
+        for node in self._iter_all(label):
+            yield self._node_to_dict(node)
 
-        num_results = len(record_list)
-        if num_results == 0:
-            raise KeyError('Not found')
-        elif num_results > 1:
-            raise KeyError('Not unique')
-        else:
-            record = record_list[0]
-            return self._record_to_dict(record)
+    def _iter_all(self, label):
+        response = self._graph.find(label)
+        for node in response:
+            yield node
+
+    def get_one(self, label, prop_key, prop_value):
+        """ Get a unique enity that matches the query dictionary """
+        node = self._get_one(label, prop_key, prop_value)
+        return self._node_to_dict(node)
+
+    def _get_one(self, label, prop_key, prop_value):
+        """ Get a unique enity that matches the query dictionary """
+
+        found_node = self._graph.find_one(label, prop_key, prop_value)
+        if found_node is None:
+            raise KeyError('No node with label {l} and {pk}={pv}'.format(l=label, pk=prop_key, pv=prop_value))
+        return found_node
 
     def get(self, label, slug):
-        return self.get_one(label, {'slug': slug})
+        return self.get_one(label, 'slug', slug)
+
+    def _get(self, label, slug):
+        return self._get_one(label, 'slug', slug)
 
     def create(self, label, props, **kwargs):
         """ Create a new sluggable entity """
-        return self._create_entity(label, props)
+        return self._node_to_dict(self._create_entity(label, props))
         
-
     def _create_entity(self, label, props):
         with_slug = self._with_slug
 
         entity_dct = with_slug(props)
-        node_pattern, ident = self._compile_node_pattern(entity_dct, label)
-        create_query = """CREATE {p} return {ident}""".format(p=node_pattern, ident=ident)
+        node = Node(label, **entity_dct)
 
-        try:
-            #params_dict = self._prepend_identifier(entity_dct, ident)
-            rec_list = self._graph.cypher.execute(create_query, parameters=entity_dct)
+        try:           
+            created_node, = self._graph.create(node)
 
-        except ConstraintViolation:
-            entity_dct = with_slug(props, with_hash=True)
-            #params_dict = self._prepend_identifier(entity_dct, ident)
-            rec_list = self._graph.cypher.execute(create_query, parameters=entity_dct)
+        except GraphError as exc:
 
-        assert len(rec_list) == 1
-        return self._record_to_dict(rec_list[0])
+            if "already exists" in str(exc.args):
+                entity_dct = with_slug(props, with_hash=True)
+                node_hash = Node(label, **entity_dct)
+                created_node, = self._graph.create(node_hash)
+
+            else:
+                raise exc
+
+        return created_node
+
+    def _create_connection(self, from_label, from_slug, rel_label, to_label, to_slug, props=None):
+        """ Creates an edge between two existing nodes `frm` and `to`. """
+        """MATCH (n:Other {name: 'a'}), (m:Other {name: 'b'}) MERGE (n)-[:AA]->(b)"""
+        props = {} if props is None else props
+        from_node = self._get(from_label, from_slug)
+        to_node = self._get(to_label, to_slug)
+        print(type(from_node))
+        print(type(to_node))
+        rel = Relationship(from_node, rel_label, to_node, **props)
+        created_rel, = self._graph.create(rel)
+
+        return created_rel
 
     @classmethod
     def _with_slug(cls, props, with_hash=False):
@@ -111,18 +137,6 @@ class NeoRepository(Repository):
         return props
 
 
-    def _execute(self, query, parameters):
-        """ Execute a cypher query """
-        return self._graph.cypher.execute(query, parameters=parameters)
-
-    def _create_connection(self, frm, label, to, props=None):
-        """ Creates an edge between two existing nodes `frm` and `to`. """
-        """MATCH (n:Other {name: 'a'}), (m:Other {name: 'b'}) MERGE (n)-[:AA]->(b)"""
-        assert '_label' in frm.keys()
-        assert '_label' in to.keys()
-        from_pattern = self._compile_node_pattern(frm, 'from')
-        to_pattern = self._compile_node_pattern(to, 'tp')
-        cypher.execute()
 
     def get_or_create(self, label, props):
         """ Get or create a value node. """

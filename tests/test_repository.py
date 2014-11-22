@@ -73,13 +73,7 @@ def test_casts():
     assert rec_dict['prop_a'] == 1
     assert rec_dict['prop_b'] == 'foo'
 
-def test_create():
-    clear_db()
-    repo = NeoRepository(graph)
-    
-    #repo.create('Location', {'name': 'renate'})
 
-    #assert is_same_graph("""CREATE (l:Location {name: 'renate'})""")
 
 def test_iter_all():
     clear_db()
@@ -127,19 +121,28 @@ def test_get_one():
     graph.cypher.execute("""CREATE (n: Other {name: 'foobar'})""")
 
     repo = NeoRepository(graph)
-    one = repo.get_one('Location', {'name': 'renate'})
+    one = repo.get_one('Location', 'name', 'renate')
     assert one['name'] == 'renate'
     assert one['_label'] == 'Location'
-    one_again = repo.get_one('Location', one)
+
+    with pytest.raises(KeyError) as exc:
+        one = repo.get_one('Location', 'name', 'doesnt exist')
+    assert "No node" in str(exc.value)
+    #one_again = repo.get_one('Location', \)
 
 
-    with pytest.raises(KeyError) as e:
-        two = repo.get_one('Location', {'name': 'kater'})
-    assert 'Not unique' in str(e.value)
+def test_get():
+    clear_db()
 
-    with pytest.raises(KeyError) as e:
-        two = repo.get_one('Location', {'name': 'notexisting'})
-    assert 'Not found' in str(e.value)
+    graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
+    repo = NeoRepository(graph)
+    props = {'name': 'Kater Holzig', 'desc': 'Some Text'}
+    created = repo.create('Location', props)
+
+    fetched = repo.get('Location', 'kater-holzig')
+
+    assert created == fetched
+
 
 def test_generate_slug():
     names = ['Kater Holzig', 'Möp']
@@ -167,50 +170,45 @@ def test_create():
     created_b = repo.create('Location', props)
     assert created_b['slug'] == 'kater-holzig-9b04172633'
 
-# def test_create_connection():
-#     clear_db()
-#     repo = NeoRepository(graph)
-
-#     loc_props = {'name': 'Kater Holzig'}
-#     loc = repo.create('Location', loc_props)
-
-#     event_props = {'name': 'foo party', }
-#     event = repo.create('Happening', event_props)
-
-#     connection = repo._create_connection(event, 'HAPPENS_AT', loc)
-
-#     should_state = """CREATE 
-#                        (a:Happening {name:'foo party', slug: 'foo-party'})
-#                       -[:HAPPENS_AT]->
-#                       (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
-#     assert is_same_graph()
-
-def test_get():
+def test_create_connection():
     clear_db()
+    repo = NeoRepository(graph)
 
     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
+    graph.cypher.execute("""CREATE CONSTRAINT ON (n:Happening) ASSERT n.slug IS UNIQUE""")
+    
+    loc_props = {'name': 'Kater Holzig'}
+    repo.create('Location', loc_props)
+
+    event_props = {'name': 'foo party', }
+    repo.create('Happening', event_props)
+
+    repo._create_connection('Happening', 'foo-party', 'HAPPENS_AT', 'Location', 'kater-holzig')
+
+    should_state = """CREATE 
+                       (a:Happening {name:'foo party', slug: 'foo-party'})
+                      -[:HAPPENS_AT]->
+                      (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
+    
+    assert is_same_graph(should_state)
+
+
+def test_get_joined():
+    clear_db()
+
     repo = NeoRepository(graph)
-    props = {'name': 'Kater Holzig', 'desc': 'Some Text'}
-    created = repo.create('Location', props)
+    loc_props = {'name': 'Kater Holzig', }
+    repo.create('Location', loc_props)
 
-    fetched = repo.get('Location', 'kater-holzig')
+    event_props = {'name': 'foo party', }
+    #event = repo.create('Happening', event_props, location=loc)
+    repo.create('Happening', event_props)
 
-    assert created == fetched
+    repo._create_connection('Happening', 'foo-party', 'HAPPENS_AT', 'Location', 'kater-holzig')
 
-# # def test_get_joined():
-# #     clear_db()
 
-# #     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
-# #     graph.
-# #     repo = NeoRepository(graph)
-# #     loc_props = {'name': 'Kater Holzig', }
-# #     loc = repo.create('Location', loc_props)
+    joined = repo.get_joined('Happening', 'foo-party', 'HAPPENS_AT')
 
-# #     event_props = {'name': 'foo party', }
-# #     event = repo.create('Happening', event_props, location=loc)
-
-# #     should_state = """CREATE 
-# #                       (a:Happening {name:'foo party', slug: 'foo-party'})
-# #                       -[:HAPPENS_AT]->
-# #                       (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
-# #     assert is_same_graph()
+    assert joined['HAPPENS_AT']['slug'] == 'Kater Holzig'
+    
+    assert is_same_graph()
