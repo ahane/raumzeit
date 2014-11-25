@@ -13,7 +13,7 @@ def clear_db(host=host):
     if resp.ok:
         return True 
     else:
-        raise ValueError(resp.status)
+        raise ValueError(resp.status_code)
 
 def is_same_graph(cypher, host=host):
     body = json.dumps({"cypher": cypher})
@@ -23,7 +23,7 @@ def is_same_graph(cypher, host=host):
     if resp.ok:
         return True
     else:
-        raise ValueError(resp.status)
+        raise ValueError(resp.status_code)
 
 def test_db_testing():
     clear_db()
@@ -93,24 +93,6 @@ def test_iter_all():
         assert each['_label'] == 'Location'
 
 
-def test_compile_query():
-    d = {'a': 123, 'b': 'foo', '_label': 'L'}
-    
-    props_pattern = NeoRepository._compile_props_pattern(d, 'n')
-    # our dict is accessed randomly so we test both orderings
-    assert (props_pattern == "{a: {n_a}, b: {n_b}}" or props_pattern == "{b: {n_b}, a: {n_a}}")
-
-    # ident_dict = NeoRepository._prepend_identifier(d, 'n')
-    # assert ident_dict == {'n_a': 123, 'n_b': 'foo', 'n__label': 'L'}
-
-    node_pattern, ident = NeoRepository._compile_node_pattern(d, 'L')
-    assert (node_pattern == "(n:L {a: {a}, b: {b}})" or node_pattern == "(n:L {b: {b}, a: {a}})")
-    assert ident == 'n'
-
-    node_pattern2, ident = NeoRepository._compile_node_pattern(d, 'L', 'name')
-    assert (node_pattern2 == "(name:L {a: {name_a}, b: {name_b}})" or node_pattern2 == "(name:L {b: {name_b}, a: {name_a}})")
-    assert ident == 'name'
-
 def test_get_one():
     clear_db()
 
@@ -142,6 +124,23 @@ def test_get():
     fetched = repo.get('Location', 'kater-holzig')
 
     assert created == fetched
+
+def test_url_get():
+    clear_db()
+
+    graph.cypher.execute("""CREATE CONSTRAINT ON (n:URI) ASSERT n.url is UNIQUE""")
+    graph.cypher.execute("""CREATE (n: Location {name: 'renate'})-[:IDENTIFIED_BY]->(m: URI {url:'http://someurl.com'})""")
+    graph.cypher.execute("""CREATE (n: Location {name: 'kater'})-[:IDENTIFIED_BY]->(m: URI {url:'http://someurl2.com'})""")
+    repo = NeoRepository(graph)
+
+    fetched = repo.url_get('http://someurl2.com')
+
+    assert fetched['name'] == 'kater'
+
+    with pytest.raises(KeyError) as exc:
+        repo.url_get('http://not_existing')
+    assert "No node" in str(exc.value)
+
 
 
 def test_generate_slug():
@@ -192,6 +191,42 @@ def test_create_connection():
     
     assert is_same_graph(should_state)
 
+def test_connection_happening_location():
+    clear_db()
+    repo = NeoRepository(graph)
+
+    loc_props = {'name': 'Kater Holzig'}
+    loc = repo.create('Location', loc_props)
+
+    event_props = {'name': 'foo party'}
+    event = repo.create('Happening', event_props)
+
+
+    with_child = repo.create_connection(event, loc)
+
+    should_state_loc = """CREATE 
+                       (a:Happening {name:'foo party', slug: 'foo-party'})
+                      -[:HAPPENS_AT]->
+                      (b:Location {name:'Kater Holzig', slug: 'kater-holzig'})"""
+    
+    assert is_same_graph(should_state_loc)
+    assert with_child['slug'] == 'foo-party'
+    assert with_child['location'][0]['slug'] == 'kater-holzig'
+
+def test_connection_happening_artists():
+    clear_db()
+    repo = NeoRepository(graph)
+    event_props = {'name': 'foo party', }
+    event = repo.create('Happening', event_props)
+    artist_props = {'name': 'DJ1'}
+    artist = repo.create('Artist', artist_props)
+
+    repo.create_connection(event, artist)
+    should_state_artist = """CREATE 
+                       (a:Happening {name:'foo party', slug: 'foo-party'})
+                       -[:HOSTS]->
+                       (b:Artist {name:'DJ1', slug: 'dj1'})"""
+    assert is_same_graph(should_state_artist)
 
 def test_get_joined():
     clear_db()
@@ -208,12 +243,14 @@ def test_get_joined():
     repo.create('Artist', {'name': 'DJ2'})
 
     repo._create_connection('Happening', 'foo-party', 'HAPPENS_AT', 'Location', 'kater-holzig')
-    repo._create_connection('Artist', 'dj1', 'PERFORMS_AT', 'Happening', 'foo-party')
-    repo._create_connection('Artist', 'dj2', 'PERFORMS_AT', 'Happening', 'foo-party')
+    repo._create_connection('Happening', 'foo-party', 'HOSTS', 'Artist', 'dj1')
+    repo._create_connection('Happening', 'foo-party', 'HOSTS', 'Artist', 'dj2')
+    
 
     joined_loc = repo.get_joined('Happening', 'foo-party', 'location')
     assert joined_loc['slug'] =='foo-party'
-    assert joined_loc['location']['slug'] == 'kater-holzig'
+    assert len(joined_loc['location']) == 1
+    assert joined_loc['location'][0]['slug'] == 'kater-holzig'
 
     joined_art = repo.get_joined('Happening', 'foo-party', 'artists')
     assert joined_loc['slug'] =='foo-party'
@@ -223,7 +260,7 @@ def test_get_joined():
     assert 'dj2' in artist_slugs
 
     # Next up!
-    joined_both = repo.get_joined('Happening', 'foo-party', 'artists', 'location')
+    #joined_both = repo.get_joined('Happening', 'foo-party', 'artists', 'location')
     
     
     

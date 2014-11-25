@@ -50,7 +50,10 @@ class Repository(object):
 
 class NeoRepository(Repository):
 
-    REL_TO_ATTR = {'HAPPENS_AT': 'location', 'PERFORMS_AT': 'artists'}
+    LABELS_TO_REL = {('Happening', 'Location'): 'HAPPENS_AT',
+                     ('Happening', 'Artist'): 'HOSTS'}
+
+    REL_TO_ATTR = {'HAPPENS_AT': 'location', 'HOSTS': 'artists'}
     ATTR_TO_REL = {v: k for k, v in REL_TO_ATTR.items()}
 
     def __init__(self, graph):
@@ -92,25 +95,41 @@ class NeoRepository(Repository):
     def _get(self, label, slug):
         return self._get_one(label, 'slug', slug)
 
+    def url_get(self, url):
+        return self._node_to_dict(self._url_get(url))
+
+    def _url_get(self, url):
+        url_node = self._get_one('URI', 'url', url)
+        rel = self._graph.match_one(None, 'IDENTIFIED_BY', url_node)
+        return rel.start_node
+
     def get_joined(self, label, slug, rel_attr):
         """ Returns an entity dict with another entity embedded in it """
         
         rel_label = self.ATTR_TO_REL[rel_attr]
-        nodes = self._get_joined(label, slug, rel_label)
+        start_node = self._get(label, slug)
+        nodes = self._get_joined(start_node, rel_label)
 
-        if len(nodes) == 0:
+        parent_node = nodes[0][0]
+        child_nodes = [child for par, child in nodes]
+        
+        return self._return_joined(parent_node, child_nodes, rel_label)
+
+    def _return_joined(self, parent_node, child_nodes, rel_label):
+
+        if len(child_nodes) == 0:
             raise KeyError("No relationship found with label {rel}".format(rel=rel_label))
-        elif len(nodes) == 1:
-            child_dict = self._node_to_dict(nodes[0][1])
-        else:
-            child_dict = [self._node_to_dict(e_node) for s_node, e_node in nodes]
 
-        parent_dict = self._node_to_dict(nodes[0][0])
+        else:
+            child_dict = [self._node_to_dict(node) for node in child_nodes]
+
+        parent_dict = self._node_to_dict(parent_node)
+        rel_attr = self.REL_TO_ATTR[rel_label]
         parent_dict[rel_attr] = child_dict
         return parent_dict
 
-    def _get_joined(self, start_label, slug, rel_label):
-        start_node = self._get(start_label, slug)
+    def _get_joined(self, start_node, rel_label):
+        
         rels = list(self._graph.match(start_node, rel_label, bidirectional=True))
         
         #handle bidirectionality
@@ -138,7 +157,6 @@ class NeoRepository(Repository):
             created_node, = self._graph.create(node)
 
         except GraphError as exc:
-
             if "already exists" in str(exc.args):
                 entity_dct = with_slug(props, with_hash=True)
                 node_hash = Node(label, **entity_dct)
@@ -149,13 +167,30 @@ class NeoRepository(Repository):
 
         return created_node
 
+    def create_connection(self, from_dct, to_dct, props=None):
+        from_label = from_dct['_label']
+        from_slug = from_dct['slug']
+        to_label = to_dct['_label']
+        to_slug = to_dct['slug']
+        rel_label = self.LABELS_TO_REL[(from_label, to_label)]
+
+        created_rel = self._create_connection(from_label, from_slug, rel_label, to_label, to_slug, props)
+        parent_node = created_rel.start_node
+        child_nodes = [created_rel.end_node]
+
+        created_dct = self._return_joined(parent_node, child_nodes, rel_label)
+        return created_dct
+
+
     def _create_connection(self, from_label, from_slug, rel_label, to_label, to_slug, props=None):
         """ Creates an edge between two existing nodes `frm` and `to`. """
-        """MATCH (n:Other {name: 'a'}), (m:Other {name: 'b'}) MERGE (n)-[:AA]->(b)"""
+        
         props = {} if props is None else props
+        
         from_node = self._get(from_label, from_slug)
         to_node = self._get(to_label, to_slug)
         rel = Relationship(from_node, rel_label, to_node, **props)
+        
         created_rel, = self._graph.create(rel)
 
         return created_rel
