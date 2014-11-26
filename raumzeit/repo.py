@@ -4,6 +4,7 @@ from py2neo.error import GraphError
 import re
 import hashlib
 from unicodedata import normalize as uni_normalize
+from datetime import datetime, timedelta
 
 _punct_re = re.compile(r"""[\t !"#$%&\'()*\-/<=>?@\[\\\]^_`{|},.]+""")
 
@@ -52,7 +53,6 @@ class NeoRepository(Repository):
 
     LABELS_TO_REL = {('Happening', 'Location'): 'HAPPENS_AT',
                      ('Happening', 'Artist'): 'HOSTS'}
-
     REL_TO_ATTR = {'HAPPENS_AT': 'location', 'HOSTS': 'artists'}
     ATTR_TO_REL = {v: k for k, v in REL_TO_ATTR.items()}
 
@@ -148,57 +148,55 @@ class NeoRepository(Repository):
         return self._node_to_dict(self._create_entity(label, props))
         
     def _create_entity(self, label, props):
-        with_slug = self._with_slug
-
-        entity_dct = with_slug(props)
-        node = Node(label, **entity_dct)
-
+        """ Create a new sluggable entity. Must have a 'name' property. """
+        entity_dct = self._with_slug(props)
         try:           
-            created_node, = self._graph.create(node)
+            node = self._create_node(label, entity_dct)
 
         except GraphError as exc:
             if "already exists" in str(exc.args):
-                entity_dct = with_slug(props, with_hash=True)
-                node_hash = Node(label, **entity_dct)
-                created_node, = self._graph.create(node_hash)
-
+                entity_dct = self._with_slug(props, with_hash=True)
+                node = self._create_node(label, entity_dct)
             else:
                 raise exc
 
-        return created_node
+        return node
+
+    def _create_node(self, label, props):
+        """ Create a new node. """
+        node = Node(label, **props)
+        self._graph.create(node)
+        return node
+
 
     def create_connection(self, from_dct, to_dct, props=None):
-        from_label = from_dct['_label']
-        from_slug = from_dct['slug']
-        to_label = to_dct['_label']
-        to_slug = to_dct['slug']
+
+        from_label, to_label = from_dct['_label'], to_dct['_label']
+        from_slug, to_slug = from_dct['slug'], to_dct['slug']
+        from_node = self._get(from_label, from_slug)
+        to_node = self._get(to_label, to_slug)
         rel_label = self.LABELS_TO_REL[(from_label, to_label)]
 
-        created_rel = self._create_connection(from_label, from_slug, rel_label, to_label, to_slug, props)
+        created_rel = self._create_connection(from_node, rel_label, to_node, props)
         parent_node = created_rel.start_node
         child_nodes = [created_rel.end_node]
 
         created_dct = self._return_joined(parent_node, child_nodes, rel_label)
         return created_dct
 
-
-    def _create_connection(self, from_label, from_slug, rel_label, to_label, to_slug, props=None):
+    def _create_connection(self, from_node, rel_label, to_node, props=None):
         """ Creates an edge between two existing nodes `frm` and `to`. """
-        
         props = {} if props is None else props
-        
-        from_node = self._get(from_label, from_slug)
-        to_node = self._get(to_label, to_slug)
         rel = Relationship(from_node, rel_label, to_node, **props)
-        
         created_rel, = self._graph.create(rel)
-
         return created_rel
 
     @classmethod
     def _with_slug(cls, props, with_hash=False):
         """ Insert a slug into the props dict """
         props = props.copy()
+        if 'name' not in props.keys():
+            raise ValueError("Entity needs 'name' attribute")
         if not with_hash:
             props['slug'] = cls.slugify(props['name'])
         else:
@@ -237,4 +235,136 @@ class NeoRepository(Repository):
         node_dict['_label'] = list(node.labels)[0]
         return node_dict
         
+
+class HappeningCollection(NeoRepository):
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def iter_all():
+        pass
+
+    def get():
+        pass
+
+    def iter_timespan():
+        pass
+
+    def create(self, start, stop, props):
+        happ_node = self._create_entity('Happening', props)
+        return self._node_to_dict(happ_node)
+
+
+class ArtistCollection(object):
+    
+    def iter_all():
+        pass
+
+    def get():
+        pass
+
+    def iter_timespan():
+        pass
+
+    def create():
+        pass
+
+
+class WorkCollection(object):
+
+    def iter_all():
+        pass
+
+    def get():
+        pass
+
+    def create():
+        pass
+
+
+class LocationCollection(object):
+    
+    def iter_all():
+        pass
+
+    def get():
+        pass
+
+    def create():
+        pass
+    
+class Timeline(NeoRepository):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #self._graph.cypher.execute("""CREATE CONSTRAINT ON (n:Hour) ASSERT n.start is UNIQUE""")
+        self.index = self._create_node("HourIndex", {})
+
+    def _create_hour(self, hour_datetime):
+     
+        start = self._date_to_string(hour_datetime)
+        hour = self._create_node("Hour", {'start': start})
+        self._create_connection(self.index, 'LATEST', hour)
+        return hour
+
+
+    def _append_hours(self, new_latest_datetime):
+
+        curr_latest = self._string_to_date(self.latest.properties['start'])
+        
+        datetime_range = self._hour_range(curr_latest, new_latest_datetime)
+        new_datetimes = datetime_range[1:]
+        strings = [self._date_to_string(h) for h in new_datetimes]
+        new_nodes = [Node("Hour", start=h) for h in strings]
+
+        all_nodes = [self.latest] + new_nodes
+        neighbours = zip(all_nodes[:-1], all_nodes[1:])
+        rels = [Relationship(left, 'NEXT', right) for left, right in neighbours]
+        
+        new_entries = new_nodes + rels
+        self._graph.create(*new_entries)
+        self._set_latest(new_nodes[-1])
+
+
+    def _set_latest(self, latest_node):
+        old_rel = self._graph.match_one(self.index, 'LATEST', self.latest)
+        self._graph.delete(old_rel)
+        rel = Relationship(self.index, 'LATEST', latest_node)
+        self._graph.create(rel)
+        return latest_node
+
+    @staticmethod
+    def _hour_range(start_hour, end_hour=None, len_range=None):
+        """ Creates a range of datetime objects of hours"""
+        
+        if end_hour is not None:
+            delta = end_hour - start_hour
+            print(delta.seconds)
+            num_hours = int((delta.days*24) + (delta.seconds/60/60))
+
+        elif len_range is not None:
+            num_hours = len_range - 1
+
+        else:
+            raise ValueError('Need either end_hour or len_range to compute hour range')
+
+        one_hour = timedelta(0, 60*60)        
+        hours = [start_hour]
+        for i in range(num_hours):
+            last_hour = hours[-1]
+            next_hour = last_hour + one_hour
+            hours.append(next_hour)
+        return hours
+
+    def _date_to_string(self, dt):
+        if dt.minute != 0 or dt.second != 0:
+            dt = datetime(dt.year, dt.month, dt.day, dt.hour)
+        return dt.isoformat()
+    def _string_to_date(self, date_string):
+        return datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S')
+
+    @property
+    def latest(self):
+        rel = self._graph.match_one(start_node=self.index, rel_type='LATEST')
+        return rel.end_node
+
