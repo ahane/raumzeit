@@ -299,22 +299,47 @@ class Timeline(NeoRepository):
         super().__init__(*args, **kwargs)
         #self._graph.cypher.execute("""CREATE CONSTRAINT ON (n:Hour) ASSERT n.start is UNIQUE""")
         self.index = self._create_node("HourIndex", {})
+        self.latest = None
 
-    def _create_hour(self, hour_datetime):
-     
-        start = self._date_to_string(hour_datetime)
-        hour = self._create_node("Hour", {'start': start})
-        self._create_connection(self.index, 'LATEST', hour)
-        return hour
+    def _init_hour(self, hour_datetime):
+        
+        floored = self._floor_datetime(hour_datetime)
+        start = self._dt_to_str(floored)
+        hour_node = self._create_node("Hour", {'start': start})
+        self._create_connection(self.index, 'LATEST', hour_node)
+        self.latest = hour_node
+        return hour_node
 
+    def create_timespan(self, start, stop):
+        """ Create a timespan node and connect it to the hours on the timeline it overlaps. """
+        
+        if self.latest is None:
+            self._init_hour(start)
+
+        curr_latest_dt = self._start_h_from_node(self.latest)
+        if stop > curr_latest_dt:
+            self._append_hours(stop)
+
+        start_string, stop_string = self._dt_to_str(start), self._dt_to_str(stop)
+        timespan_node = Node('Timespan', start=start_string, stop=stop_string)
+        
+        hour_dts = self._hour_range(start, stop)
+        hour_strings = [self._dt_to_str(dt) for dt in hour_dts]
+        hour_nodes = [self._graph.find_one('Hour', 'start', start) for start in hour_strings] 
+        rels = [Relationship(timespan_node, 'OVERLAPS', hour_node) for hour_node in hour_nodes]
+
+        new_entries = [timespan_node] + rels
+        self._graph.create(*new_entries)
+
+        return timespan_node
 
     def _append_hours(self, new_latest_datetime):
 
-        curr_latest = self._string_to_date(self.latest.properties['start'])
+        curr_latest = self._str_to_dt(self.latest.properties['start'])
         
         datetime_range = self._hour_range(curr_latest, new_latest_datetime)
         new_datetimes = datetime_range[1:]
-        strings = [self._date_to_string(h) for h in new_datetimes]
+        strings = [self._dt_to_str(h) for h in new_datetimes]
         new_nodes = [Node("Hour", start=h) for h in strings]
 
         all_nodes = [self.latest] + new_nodes
@@ -327,19 +352,21 @@ class Timeline(NeoRepository):
 
 
     def _set_latest(self, latest_node):
-        old_rel = self._graph.match_one(self.index, 'LATEST', self.latest)
+        old_rel = self._graph.match_one(self.index, 'LATEST')
         self._graph.delete(old_rel)
         rel = Relationship(self.index, 'LATEST', latest_node)
         self._graph.create(rel)
+        self.latest_dt = self._str_to_dt(latest_node.properties['start'])
         return latest_node
 
-    @staticmethod
-    def _hour_range(start_hour, end_hour=None, len_range=None):
+    
+    def _hour_range(self, start_hour, end_hour=None, len_range=None):
         """ Creates a range of datetime objects of hours"""
         
+        start_hour = self._floor_datetime(start_hour)
         if end_hour is not None:
+            end_hour = self._floor_datetime(end_hour)
             delta = end_hour - start_hour
-            print(delta.seconds)
             num_hours = int((delta.days*24) + (delta.seconds/60/60))
 
         elif len_range is not None:
@@ -356,15 +383,20 @@ class Timeline(NeoRepository):
             hours.append(next_hour)
         return hours
 
-    def _date_to_string(self, dt):
-        if dt.minute != 0 or dt.second != 0:
-            dt = datetime(dt.year, dt.month, dt.day, dt.hour)
+    def _start_h_from_node(self, node_with_start):
+        date_string = node_with_start.properties['start']
+        return self._str_to_dt(date_string)
+
+    def _dt_to_str(self, dt):
         return dt.isoformat()
-    def _string_to_date(self, date_string):
+
+    def _str_to_dt(self, date_string):
         return datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S')
 
-    @property
-    def latest(self):
-        rel = self._graph.match_one(start_node=self.index, rel_type='LATEST')
-        return rel.end_node
+    def _floor_datetime(self, dt):
+        if dt.minute != 0 or dt.second != 0:
+            dt = datetime(dt.year, dt.month, dt.day, dt.hour)
+        return dt
+    
+
 

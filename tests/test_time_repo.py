@@ -18,13 +18,12 @@ def test_init():
 	assert list(tl.index.labels)[0] == 'HourIndex'
 	assert tl.index.bound
 
-def test_create_hour():
+def test_init_hour():
 	clear_db()
 	
 	tl = Timeline(graph)
 	assert is_same_graph("""CREATE (n: HourIndex) """)
-	hour = tl._create_hour(datetime(2014, 1, 1, 12))
-	print(hour)
+	hour = tl._init_hour(datetime(2014, 1, 1, 12, 30))
 	assert is_same_graph("""CREATE (n: HourIndex)-[:LATEST]->(m: Hour {start: '2014-01-01T12:00:00'}) """)
 	assert hour.bound 
 	labels = list(hour.labels)
@@ -39,17 +38,13 @@ def test_find_latest():
 	latest = tl.latest
 	assert latest.properties['start'] == '2014-01-01T12:00:00'
 
-def test_create_multiple_hours():
+def test_append_hours():
 	clear_db()
 
 	tl = Timeline(graph)
 	tl._create_hour(datetime(2014, 1, 1, 12))
 	tl._append_hours(datetime(2014, 1, 1, 14))
 	
-	 # MERGE (n: Hour {start: '2014-01-01T12:00:00'})
-		# 	 -[:NEXT]->(m: Hour {start: '2014-01-01T13:00:00'})
-		#      -[:NEXT]->(o: Hour {start: '2014-01-01T14:00:00'})<-[:LATEST]-(i)"""
-
 	target = """CREATE (i: HourIndex)
 			  MERGE (n: Hour {start: '2014-01-01T12:00:00'})
 			 -[:NEXT]->(m: Hour {start: '2014-01-01T13:00:00'})
@@ -66,7 +61,7 @@ def test_set_latest():
 	tl._set_latest(new_latest)
 
 	assert tl.latest == new_latest
-	#assert has_sub_graph("""CREATE (n: HourIndex)-[:LATEST]->(m: Hour {start: '2014-01-01T13:00:00'}) """)
+	assert has_sub_graph("""CREATE (n: HourIndex)-[:LATEST]->(m: Hour {start: '2014-01-01T13:00:00'}) """)
 
 
 
@@ -93,3 +88,29 @@ def test_format_datetime():
 
 
 	assert tl._string_to_date(dstring) == dt1
+
+
+def test_create_timespan():
+	clear_db()
+	tl = Timeline(graph)
+	start = datetime(2014, 1, 1, 18, 30)
+	stop = datetime(2014, 1, 1, 20, 10)
+	timespan_node = tl.create_timespan(start, stop)
+
+	assert timespan_node.bound 
+	assert timespan_node.properties['start'] == '2014-01-01T18:30:00'
+	assert timespan_node.properties['stop'] == '2014-01-01T20:10:00'
+	target_tl = """CREATE (i: HourIndex) MERGE (n: Hour {start: '2014-01-01T18:00:00'})
+						 -[:NEXT]->(m: Hour {start: '2014-01-01T19:00:00'})
+	 				     -[:NEXT]->(o: Hour {start: '2014-01-01T20:00:00'})<-[:LATEST]-(i)"""
+	assert has_sub_graph(target_tl)
+	target_ts_a = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
+			  -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T18:00:00'})"""
+	target_ts_b = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
+				  -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T19:00:00'})"""
+	target_ts_c = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
+				  -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T20:00:00'})"""
+
+	assert has_sub_graph(target_ts_a)
+	assert has_sub_graph(target_ts_b)
+	assert has_sub_graph(target_ts_c)
