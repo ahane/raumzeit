@@ -236,10 +236,12 @@ class NeoRepository(Repository):
         return node_dict
         
 
-class HappeningCollection(NeoRepository):
+class HappeningCollection(object):
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, graph, repo, timeline):
+        self._graph = graph
+        self._timeline = timeline
+        self._repo = repo
 
     def iter_all():
         pass
@@ -293,19 +295,23 @@ class LocationCollection(object):
     def create():
         pass
     
-class Timeline(NeoRepository):
+class Timeline(object):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, graph):
+        
+        self._graph = graph
         self._graph.cypher.execute("""CREATE CONSTRAINT ON (n:Hour) ASSERT n.start is UNIQUE""")
     
         index_nodes =  list(self._graph.find("HourIndex"))
         num_index = len(index_nodes)
         if num_index > 1:
+            print('a')
             raise ValueError('More than one index found')
         elif num_index == 1:
+            print('b')
             self.index = index_nodes[0]
         else:
+            print('c')
             index_node = Node('HourIndex')
             self._graph.create(index_node)
             self.index = index_node
@@ -332,19 +338,23 @@ class Timeline(NeoRepository):
         floored = self._floor_dt(hour_datetime)
         start = self._dt_to_str(floored)
         hour_node = self._create_node("Hour", {'start': start})
-        self._create_connection(self.index, 'LATEST', hour_node)
-        self._create_connection(self.index, 'EARLIEST', hour_node)
+        self._set_latest(hour_node)
+        self._set_earliest(hour_node)
         return hour_node
 
     def create_timespan(self, start, stop):
         """ Create a timespan node and connect it to the hours on the timeline it overlaps. """
         
-        if self.latest is None:
+        if self.latest is None or self.earliest is None:
             self._init_hour(start)
 
         curr_latest_dt = self._start_h_from_node(self.latest)
         if stop > curr_latest_dt:
             self._append_hours(stop)
+
+        curr_earliest_dt = self._start_h_from_node(self.earliest)
+        if start < curr_earliest_dt:
+            self._prepend_hours(start)
 
         start_string, stop_string = self._dt_to_str(start), self._dt_to_str(stop)
         timespan_node = Node('Timespan', start=start_string, stop=stop_string)
