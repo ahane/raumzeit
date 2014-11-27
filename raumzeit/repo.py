@@ -304,14 +304,14 @@ class Timeline(object):
     
         index_nodes =  list(self._graph.find("HourIndex"))
         num_index = len(index_nodes)
+        print(num_index)
         if num_index > 1:
-            print('a')
             raise ValueError('More than one index found')
         elif num_index == 1:
-            print('b')
+            print('found')
             self.index = index_nodes[0]
         else:
-            print('c')
+            print('create')
             index_node = Node('HourIndex')
             self._graph.create(index_node)
             self.index = index_node
@@ -337,7 +337,8 @@ class Timeline(object):
         
         floored = self._floor_dt(hour_datetime)
         start = self._dt_to_str(floored)
-        hour_node = self._create_node("Hour", {'start': start})
+        hour_node = Node("Hour", start=start)
+        self._graph.create(hour_node)
         self._set_latest(hour_node)
         self._set_earliest(hour_node)
         return hour_node

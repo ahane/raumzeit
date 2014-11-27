@@ -8,28 +8,22 @@ HOST = 'localhost'
 neo_uri = 'http://{host}:7474/db/data/'.format(host=HOST)
 
 @pytest.fixture
-def graph():
+def graph(scope='module'):
     return py2neo.Graph(neo_uri)
 
 @pytest.fixture
-def tl2(graph):
+def tl(graph):
+	graph.delete_all()
 	return Timeline(graph)
 
-def test_cold_init(graph, tl2):
-	#clear_db()
-	print(tl2.index)
-	# Cold Init
-	
-	
-	assert is_same_graph("""CREATE (n: HourIndex) """)
-	assert len(tl2.index.labels) == 1
-	assert list(tl2.index.labels)[0] == 'HourIndex'
-	assert tl2.index.bound
-	assert tl2.earliest is None
-	assert tl2.latest is None
-	clear_db()
-	# TODO: Where should clear_db be? begin or end?
+def test_cold_init(tl):
 
+	assert is_same_graph("""CREATE (n: HourIndex) """)
+	assert len(tl.index.labels) == 1
+	assert list(tl.index.labels)[0] == 'HourIndex'
+	assert tl.index.bound
+	assert tl.earliest is None
+	assert tl.latest is None
 	
 def test_warm_init(graph):
 	clear_db()
