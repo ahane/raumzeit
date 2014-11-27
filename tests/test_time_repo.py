@@ -5,18 +5,36 @@ import pytest
 from datetime import datetime
 
 
-def test_init():
+def test_cold_init():
 	clear_db()
-	tl = Timeline(graph)
 
-	graph.cypher.execute("""CREATE (n: Hour {start: '2014-11-25T18:00:00'}) """)
-	with pytest.raises(py2neo.error.GraphError) as exc:
-		graph.cypher.execute("""CREATE (n: Hour {start: '2014-11-25T18:00:00'}) """)
-	assert "already exists" in str(exc.value)
+	# Cold Init
+	tl = Timeline(graph)
+	assert is_same_graph("""CREATE (n: HourIndex) """)
+	assert len(tl.index.labels) == 1
+	assert list(tl.index.labels)[0] == 'HourIndex'
+	assert tl.index.bound
+	assert tl.earliest is None
+	assert tl.latest is None
+
+	
+def test_warm_init():
+	clear_db()
+	graph.cypher.execute("""CREATE (i: HourIndex)
+		                    MERGE (i)-[:EARLIEST]->(n: Hour {start: '2014-11-25T18:00:00'})
+		                   -[:NEXT]->(m: Hour {start: '2014-11-25T19:00:00'})<-[:LATEST]-(i) """)
+	tl = Timeline(graph)
+	#Test Unique Constraint
+	# with pytest.raises(py2neo.error.GraphError) as exc:
+	# 	graph.cypher.execute("""CREATE (n: Hour {start: '2014-11-25T18:00:00'}) """)
+	# assert "already exists" in str(exc.value)
 
 	assert len(tl.index.labels) == 1
 	assert list(tl.index.labels)[0] == 'HourIndex'
 	assert tl.index.bound
+	print(tl.latest)
+	assert tl.earliest.properties['start'] == '2014-11-25T18:00:00'
+	assert tl.latest.properties['start'] == '2014-11-25T19:00:00'
 
 def test_init_hour():
 	clear_db()
@@ -24,7 +42,7 @@ def test_init_hour():
 	tl = Timeline(graph)
 	assert is_same_graph("""CREATE (n: HourIndex) """)
 	hour = tl._init_hour(datetime(2014, 1, 1, 12, 30))
-	assert is_same_graph("""CREATE (n: HourIndex)-[:LATEST]->(m: Hour {start: '2014-01-01T12:00:00'}) """)
+	assert is_same_graph("""CREATE (n: HourIndex)-[:LATEST]->(m: Hour {start: '2014-01-01T12:00:00'})<-[:EARLIEST]-(n) """)
 	assert hour.bound 
 	labels = list(hour.labels)
 	assert len(labels) == 1
@@ -38,30 +56,57 @@ def test_find_latest():
 	latest = tl.latest
 	assert latest.properties['start'] == '2014-01-01T12:00:00'
 
-def test_append_hours():
-	clear_db()
-
-	tl = Timeline(graph)
-	tl._create_hour(datetime(2014, 1, 1, 12))
-	tl._append_hours(datetime(2014, 1, 1, 14))
-	
-	target = """CREATE (i: HourIndex)
-			  MERGE (n: Hour {start: '2014-01-01T12:00:00'})
-			 -[:NEXT]->(m: Hour {start: '2014-01-01T13:00:00'})
-		     -[:NEXT]->(o: Hour {start: '2014-01-01T14:00:00'})<-[:LATEST]-(i)"""
-	assert is_same_graph(target)
-
 def test_set_latest():
 	clear_db()
 	tl = Timeline(graph)
 	graph.cypher.execute("""MATCH (n: HourIndex)
-							MERGE (n)-[:LATEST]->(m: Hour {start: '2014-01-01T12:00:00'}) """)
+							MERGE (n)-[:LATEST]->(m: Hour {start: '2014-01-01T12:00:00'})<-[:EARLIEST]-(n) """)
 	new_latest, = graph.create(py2neo.Node('Hour', start='2014-01-01T13:00:00'))
 	
 	tl._set_latest(new_latest)
 
 	assert tl.latest == new_latest
 	assert has_sub_graph("""CREATE (n: HourIndex)-[:LATEST]->(m: Hour {start: '2014-01-01T13:00:00'}) """)
+
+def test_set_earliest():
+	clear_db()
+	tl = Timeline(graph)
+	graph.cypher.execute("""MATCH (n: HourIndex)
+							MERGE (n)-[:LATEST]->(m: Hour {start: '2014-01-01T12:00:00'})<-[:EARLIEST]-(n) """)
+	new_earliest, = graph.create(py2neo.Node('Hour', start='2014-01-01T11:00:00'))
+	
+	tl._set_earliest(new_earliest)
+
+	assert tl.earliest == new_earliest
+	assert has_sub_graph("""CREATE (n: HourIndex)-[:EARLIEST]->(m: Hour {start: '2014-01-01T11:00:00'}) """)
+
+def test_append_hours():
+	clear_db()
+
+	tl = Timeline(graph)
+	tl._init_hour(datetime(2014, 1, 1, 12))
+	tl._append_hours(datetime(2014, 1, 1, 14))
+	
+	target = """CREATE (i: HourIndex)
+			  MERGE (i)-[:EARLIEST]->(n: Hour {start: '2014-01-01T12:00:00'})
+			 -[:NEXT]->(m: Hour {start: '2014-01-01T13:00:00'})
+		     -[:NEXT]->(o: Hour {start: '2014-01-01T14:00:00'})<-[:LATEST]-(i)"""
+	assert is_same_graph(target)
+
+def test_prepend_hours():
+	clear_db()
+
+	tl = Timeline(graph)
+	tl._init_hour(datetime(2014, 1, 1, 12))
+	tl._prepend_hours(datetime(2014, 1, 1, 10))
+	
+	target = """CREATE (i: HourIndex)
+			  MERGE (i)-[:EARLIEST]->(n: Hour {start: '2014-01-01T10:00:00'})
+			 -[:NEXT]->(m: Hour {start: '2014-01-01T11:00:00'})
+		     -[:NEXT]->(o: Hour {start: '2014-01-01T12:00:00'})<-[:LATEST]-(i)"""
+	assert is_same_graph(target)
+
+
 
 
 
@@ -82,12 +127,12 @@ def test_format_datetime():
 
 	dstring = '2014-01-01T12:00:00'
 
-	assert tl._date_to_string(dt1) == dstring
-	assert tl._date_to_string(dt2) == dstring
-	assert tl._date_to_string(dt3) == dstring
+	assert tl._dt_to_str(dt1) == dstring
+	assert tl._floor_dt(dt2) == dt1
+	assert tl._floor_dt(dt3) == dt1
 
 
-	assert tl._string_to_date(dstring) == dt1
+	assert tl._str_to_dt(dstring) == dt1
 
 
 def test_create_timespan():

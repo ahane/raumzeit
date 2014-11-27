@@ -297,17 +297,43 @@ class Timeline(NeoRepository):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        #self._graph.cypher.execute("""CREATE CONSTRAINT ON (n:Hour) ASSERT n.start is UNIQUE""")
-        self.index = self._create_node("HourIndex", {})
-        self.latest = None
+        self._graph.cypher.execute("""CREATE CONSTRAINT ON (n:Hour) ASSERT n.start is UNIQUE""")
+    
+        index_nodes =  list(self._graph.find("HourIndex"))
+        num_index = len(index_nodes)
+        if num_index > 1:
+            raise ValueError('More than one index found')
+        elif num_index == 1:
+            self.index = index_nodes[0]
+        else:
+            index_node = Node('HourIndex')
+            self._graph.create(index_node)
+            self.index = index_node
+
+    @property 
+    def latest(self):
+        latest_rel = self._graph.match_one(self.index, 'LATEST')
+        if latest_rel is None:
+            return None
+        else:
+            return latest_rel.end_node
+
+    @property 
+    def earliest(self):
+        earliest_rel = self._graph.match_one(self.index, 'EARLIEST')
+        if earliest_rel is None:
+            return None
+        else:
+            return earliest_rel.end_node
+    
 
     def _init_hour(self, hour_datetime):
         
-        floored = self._floor_datetime(hour_datetime)
+        floored = self._floor_dt(hour_datetime)
         start = self._dt_to_str(floored)
         hour_node = self._create_node("Hour", {'start': start})
         self._create_connection(self.index, 'LATEST', hour_node)
-        self.latest = hour_node
+        self._create_connection(self.index, 'EARLIEST', hour_node)
         return hour_node
 
     def create_timespan(self, start, stop):
@@ -333,16 +359,17 @@ class Timeline(NeoRepository):
 
         return timespan_node
 
-    def _append_hours(self, new_latest_datetime):
+    def _append_hours(self, new_latest_dt):
 
-        curr_latest = self._str_to_dt(self.latest.properties['start'])
+        old_latest_node = self.latest
+        old_latest_dt = self._start_h_from_node(old_latest_node)
         
-        datetime_range = self._hour_range(curr_latest, new_latest_datetime)
+        datetime_range = self._hour_range(old_latest_dt, new_latest_dt)
         new_datetimes = datetime_range[1:]
         strings = [self._dt_to_str(h) for h in new_datetimes]
         new_nodes = [Node("Hour", start=h) for h in strings]
 
-        all_nodes = [self.latest] + new_nodes
+        all_nodes = [old_latest_node] + new_nodes
         neighbours = zip(all_nodes[:-1], all_nodes[1:])
         rels = [Relationship(left, 'NEXT', right) for left, right in neighbours]
         
@@ -350,22 +377,46 @@ class Timeline(NeoRepository):
         self._graph.create(*new_entries)
         self._set_latest(new_nodes[-1])
 
+    def _prepend_hours(self, new_earliest_dt):
+
+        old_earliest_node = self.earliest
+        old_earliest_dt = self._start_h_from_node(old_earliest_node)
+        
+        datetime_range = self._hour_range(new_earliest_dt, old_earliest_dt)
+        new_datetimes = datetime_range[:-1]
+        strings = [self._dt_to_str(h) for h in new_datetimes]
+        new_nodes = [Node("Hour", start=h) for h in strings]
+
+        all_nodes = new_nodes + [old_earliest_node]
+        neighbours = zip(all_nodes[:-1], all_nodes[1:])
+        rels = [Relationship(left, 'NEXT', right) for left, right in neighbours]
+        
+        new_entries = new_nodes + rels
+        self._graph.create(*new_entries)
+        self._set_earliest(new_nodes[0])
+
 
     def _set_latest(self, latest_node):
         old_rel = self._graph.match_one(self.index, 'LATEST')
         self._graph.delete(old_rel)
         rel = Relationship(self.index, 'LATEST', latest_node)
         self._graph.create(rel)
-        self.latest_dt = self._str_to_dt(latest_node.properties['start'])
         return latest_node
 
-    
+    def _set_earliest(self, earliest_node):
+        old_rel = self._graph.match_one(self.index, 'EARLIEST')
+        self._graph.delete(old_rel)
+        rel = Relationship(self.index, 'EARLIEST', earliest_node)
+        self._graph.create(rel)
+        return earliest_node
+
+    @classmethod
     def _hour_range(self, start_hour, end_hour=None, len_range=None):
         """ Creates a range of datetime objects of hours"""
         
-        start_hour = self._floor_datetime(start_hour)
+        start_hour = self._floor_dt(start_hour)
         if end_hour is not None:
-            end_hour = self._floor_datetime(end_hour)
+            end_hour = self._floor_dt(end_hour)
             delta = end_hour - start_hour
             num_hours = int((delta.days*24) + (delta.seconds/60/60))
 
@@ -383,17 +434,18 @@ class Timeline(NeoRepository):
             hours.append(next_hour)
         return hours
 
+    @classmethod
     def _start_h_from_node(self, node_with_start):
         date_string = node_with_start.properties['start']
         return self._str_to_dt(date_string)
-
+    @classmethod
     def _dt_to_str(self, dt):
         return dt.isoformat()
-
+    @classmethod
     def _str_to_dt(self, date_string):
         return datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S')
-
-    def _floor_datetime(self, dt):
+    @classmethod
+    def _floor_dt(self, dt):
         if dt.minute != 0 or dt.second != 0:
             dt = datetime(dt.year, dt.month, dt.day, dt.hour)
         return dt
