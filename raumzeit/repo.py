@@ -53,7 +53,7 @@ class NeoRepository(Repository):
 
     LABELS_TO_REL = {('Happening', 'Location'): 'HAPPENS_AT',
                      ('Happening', 'Artist'): 'HOSTS'}
-    REL_TO_ATTR = {'HAPPENS_AT': 'location', 'HOSTS': 'artists'}
+    REL_TO_ATTR = {'HAPPENS_AT': 'location', 'HOSTS': 'artists', 'LOCATED_AT': 'address'}
     ATTR_TO_REL = {v: k for k, v in REL_TO_ATTR.items()}
 
     def __init__(self, graph):
@@ -125,6 +125,22 @@ class NeoRepository(Repository):
 
         parent_dict = self._node_to_dict(parent_node)
         rel_attr = self.REL_TO_ATTR[rel_label]
+        parent_dict[rel_attr] = child_dict
+        return parent_dict
+
+    def return_joined(self, parent_node, child_nodes, rel_attr, single_child=False):
+        
+        if single_child:
+            if hasattr(child_nodes, '__iter__'):
+                child_dict = self._node_to_dict(child_nodes[0])
+            else:
+                child_dict = self._node_to_dict(child_nodes)
+        else:
+            if not hasattr(child_nodes, '__iter__'):
+                raise ValueError('Need an iterable when single_child not true')
+            child_dict = [self._node_to_dict(node) for node in child_nodes]
+
+        parent_dict = self._node_to_dict(parent_node)
         parent_dict[rel_attr] = child_dict
         return parent_dict
 
@@ -285,15 +301,46 @@ class WorkCollection(object):
 
 
 class LocationCollection(object):
-    
+
+    def __init__(self, neorepo):
+        self._repo = neorepo
+        self._graph = neorepo._graph
+
     def iter_all():
         pass
 
     def get():
         pass
 
-    def create():
-        pass
+    def create(self, props, address):
+    
+        try:
+            self._validate(props, address)        
+            loc_node = self._repo._create_entity('Location', props)
+            addr_node = self._repo._create_node('Address', address)
+            rel = self._repo._create_connection(loc_node, 'LOCATED_AT', addr_node)
+            return self._repo.return_joined(loc_node, addr_node, 'address', True)
+        
+        except ValueError:
+            raise
+
+    @classmethod
+    def _validate(cls, props, address):
+        def validate(key, dct):
+            if key in dct:
+                pass
+            else:
+                raise ValueError("Couldn't find key: {k}".format(k=key))
+
+        mandatory_props = {'name'}
+        for key in mandatory_props:
+            validate(key, props)
+
+        mandatory_addr = {'lat', 'lon', 'string'}
+        for key in mandatory_addr:
+            validate(key, address)
+
+
     
 class Timeline(object):
 
@@ -304,14 +351,14 @@ class Timeline(object):
     
         index_nodes =  list(self._graph.find("HourIndex"))
         num_index = len(index_nodes)
-        print(num_index)
+        
         if num_index > 1:
             raise ValueError('More than one index found')
+        
         elif num_index == 1:
-            print('found')
             self.index = index_nodes[0]
+        
         else:
-            print('create')
             index_node = Node('HourIndex')
             self._graph.create(index_node)
             self.index = index_node
@@ -332,7 +379,6 @@ class Timeline(object):
         else:
             return earliest_rel.end_node
     
-
     def _init_hour(self, hour_datetime):
         
         floored = self._floor_dt(hour_datetime)
@@ -346,6 +392,25 @@ class Timeline(object):
     def create_timespan(self, start, stop):
         """ Create a timespan node and connect it to the hours on the timeline it overlaps. """
         
+        self._extend_timeline(start, stop)
+        start_string, stop_string = self._dt_to_str(start), self._dt_to_str(stop)
+        timespan_node = Node('Timespan', start=start_string, stop=stop_string)
+        self._connect_timespan(timespan_node, start, stop)
+        self._graph.create(timespan_node)
+
+        return timespan_node
+
+    def _connect_timespan(self, timespan_node, start, stop):
+        """ Connects a timespan node with all the hours of the timeline it overlaps. """
+        hour_dts = self._hour_range(start, stop)
+        hour_strings = [self._dt_to_str(dt) for dt in hour_dts]
+        hour_nodes = [self._graph.find_one('Hour', 'start', start) for start in hour_strings] 
+        rels = [Relationship(timespan_node, 'OVERLAPS', hour_node) for hour_node in hour_nodes]
+        
+        self._graph.create(*rels)
+
+    def _extend_timeline(self, start, stop):
+        """Adds the timespan between start, stop to the timeline. Fills up gaps with hour nodes. """
         if self.latest is None or self.earliest is None:
             self._init_hour(start)
 
@@ -356,19 +421,6 @@ class Timeline(object):
         curr_earliest_dt = self._start_h_from_node(self.earliest)
         if start < curr_earliest_dt:
             self._prepend_hours(start)
-
-        start_string, stop_string = self._dt_to_str(start), self._dt_to_str(stop)
-        timespan_node = Node('Timespan', start=start_string, stop=stop_string)
-        
-        hour_dts = self._hour_range(start, stop)
-        hour_strings = [self._dt_to_str(dt) for dt in hour_dts]
-        hour_nodes = [self._graph.find_one('Hour', 'start', start) for start in hour_strings] 
-        rels = [Relationship(timespan_node, 'OVERLAPS', hour_node) for hour_node in hour_nodes]
-
-        new_entries = [timespan_node] + rels
-        self._graph.create(*new_entries)
-
-        return timespan_node
 
     def _append_hours(self, new_latest_dt):
 
@@ -405,7 +457,6 @@ class Timeline(object):
         new_entries = new_nodes + rels
         self._graph.create(*new_entries)
         self._set_earliest(new_nodes[0])
-
 
     def _set_latest(self, latest_node):
         old_rel = self._graph.match_one(self.index, 'LATEST')
@@ -449,12 +500,15 @@ class Timeline(object):
     def _start_h_from_node(self, node_with_start):
         date_string = node_with_start.properties['start']
         return self._str_to_dt(date_string)
+
     @classmethod
     def _dt_to_str(self, dt):
         return dt.isoformat()
+
     @classmethod
     def _str_to_dt(self, date_string):
         return datetime.strptime(date_string, '%Y-%m-%dT%H:%M:%S')
+
     @classmethod
     def _floor_dt(self, dt):
         if dt.minute != 0 or dt.second != 0:

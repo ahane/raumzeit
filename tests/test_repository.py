@@ -254,7 +254,24 @@ def test_get_joined():
     # Next up!
     #joined_both = repo.get_joined('Happening', 'foo-party', 'artists', 'location')
     
-    
+def test_return_joined():
+    parent_node = py2neo.Node('LableA', prop_a=1, prop_b='foo')
+    child_node_a = py2neo.Node('LableB', prop_a=2, prop_b='bar')
+    child_node_b = py2neo.Node('LableB', prop_a=3, prop_b='baz')
+
+    repo = NeoRepository(graph)
+    dct = repo.return_joined(parent_node, child_node_a, 'rel', single_child=True)
+    assert dct['prop_a'] == 1
+    assert dct['prop_b'] == 'foo'
+    assert dct['rel']['prop_a'] == 2
+    assert dct['rel']['prop_b'] == 'bar'
+
+    dct = repo.return_joined(parent_node, [child_node_b, child_node_a], 'rel')
+    assert dct['prop_a'] == 1
+    assert dct['prop_b'] == 'foo'
+    children = dct['rel']
+    assert len(children) == 2
+    assert children[0]['prop_a'] == 2 and children[1]['prop_a'] == 3 or children[1]['prop_a'] == 2 and children[0]['prop_a'] == 3
 # def test_happenings():
 #     clear_db()
 #     happs = HappeningCollection(graph)
