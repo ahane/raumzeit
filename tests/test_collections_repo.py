@@ -8,6 +8,7 @@ from datetime import datetime
 loc_props = {'name': 'Kater Holzig'}
 artist_props = {'name': 'DJ1'}
 work_props = {'name': 'some work'}
+happ_props = {'name': 'some party'}
 address = {'lat': 51.1, 'lon': 13.1, 'string': 'Somestreet. 1'}
 links = [{'name': 'SomeRel', 'url': 'http://someurl.com'}, {'name': 'OtherRel', 'url': 'http://otherurl.com'}]
 
@@ -26,6 +27,16 @@ def artists(neorepo):
 @pytest.fixture
 def works(neorepo):
 	return repo.WorkCollection(neorepo)
+
+@pytest.fixture
+def timeline(graph):
+	return repo.Timeline(graph)
+
+
+@pytest.fixture
+def happenings(neorepo, timeline):
+	return repo.HappeningCollection(neorepo, timeline)
+
 
 
 def test_validation(locations):
@@ -151,10 +162,72 @@ def test_get_work(works, artists):
     assert work['slug'] == 'some-work'
     assert work['artist']['slug'] == 'dj1'
     assert len(work['links']) == 2
-    assert work['links'][0]['name'] == 'SomeRel' or artist['links'][0]['name'] == 'OtherRel'	
+    assert work['links'][0]['name'] == 'SomeRel' or work['links'][0]['name'] == 'OtherRel'	
 
 def test_get_work_url(works, artists):
     artist = artists.create(artist_props, [{'name':'foo', 'url':'bar'}])
     works.create(work_props, artist, links)
-    work = artists.url_get('http://otherurl.com')
+    work = works.url_get('http://otherurl.com')
     assert work == works.get('some-work')
+
+
+def test_create_happening(happenings, artists, locations):
+	artist_a = artists.create(artist_props, [{'name':'foo', 'url':'bar'}])
+	artist_b = artists.create({'name': 'DJ2'}, [{'name':'foo', 'url':'baz'}])
+	loc = locations.create(loc_props, address, [{'name': 'foo', 'url': 'bar2'}])
+	start = datetime(2014, 1, 1, 14, 20)
+	stop = datetime(2014, 1, 1, 15, 30)
+	happening = happenings.create(start, stop, happ_props, loc, [artist_a, artist_b], links)
+
+	assert has_sub_graph("""CREATE (o: URI {name: 'SomeRel', url: 'http://someurl.com'})
+                        <-[:IDENTIFIED_BY]-
+                        (n: Happening {name: 'some party', slug: 'some-party'})
+                        -[:IDENTIFIED_BY]->
+                        (m: URI {name: 'OtherRel', url: 'http://otherurl.com'})""")
+
+	assert has_sub_graph("""CREATE (m: Location {name: 'Kater Holzig', slug: 'kater-holzig'})
+							<-[:HAPPENS_AT]-(n: Happening {name: 'some party', slug: 'some-party'})""")
+
+	assert has_sub_graph("""CREATE (m: Artist {name: 'DJ1', slug: 'dj1'})
+							<-[:HOSTS]-(n: Happening {name: 'some party', slug: 'some-party'})
+							-[:HOSTS]->(o: Artist {name: 'DJ2', slug: 'dj2'})""")
+
+	assert has_sub_graph("""CREATE (m: Artist {name: 'DJ1', slug: 'dj1'})
+							<-[:HOSTS]-(n: Happening {name: 'some party', slug: 'some-party'})
+							-[:HOSTS]->(o: Artist {name: 'DJ2', slug: 'dj2'})""")
+
+	assert has_sub_graph("""CREATE (m: Timespan {start: '2014-01-01T14:20:00', stop: '2014-01-01T15:30:00'})
+							<-[:ACTIVE_DURING]-(n: Happening {name: 'some party', slug: 'some-party'})
+							MERGE (o: Hour {start: '2014-01-01T14:00:00'})
+							<-[:OVERLAPS]-(m)-[:OVERLAPS]->
+							(p: Hour {start: '2014-01-01T15:00:00'})""")
+
+
+	assert 'name' and 'slug' in happening
+	assert happening['_label'] == 'Happening'
+	assert happening['slug'] == 'some-party'
+	
+	with pytest.raises(ValueError) as exc:
+		happening = happenings.create(start, stop, happ_props, {'slug': 'bert', '_label':'WRONG'}, [artist_a, artist_b], links)
+	assert 'Key _label should be Location' in str(exc.value)
+
+	with pytest.raises(ValueError) as exc:
+		happening = happenings.create(start, stop, happ_props, loc, [{'slug': 'hans', '_label':'WRONG'}, artist_b], links)
+	assert 'Key _label should be Artist' in str(exc.value)
+
+
+def test_get_happening(happenings, locations, artists):
+    artist_a = artists.create(artist_props, [{'name':'foo', 'url':'bar'}])
+    artist_b = artists.create({'name': 'DJ2'}, [{'name':'foo', 'url':'baz'}])
+    loc = locations.create(loc_props, address, [{'name': 'foo', 'url': 'bar2'}])
+    start = datetime(2014, 1, 1, 14, 20)
+    stop = datetime(2014, 1, 1, 15, 30)
+    happenings.create(start, stop, happ_props, loc, [artist_a, artist_b], links)
+  
+    happ = happenings.get('some-party')
+    assert 'name' and 'slug' in happ
+    assert happ['_label'] == 'Happening'
+    assert happ['slug'] == 'some-party'
+    # assert happ['artist']['slug'] == 'dj1'
+    # assert len(work['links']) == 2
+    # assert work['links'][0]['name'] == 'SomeRel' or artist['links'][0]['name'] == 'OtherRel'	

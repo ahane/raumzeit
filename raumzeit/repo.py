@@ -257,28 +257,6 @@ class NeoRepository(Repository):
         assert len(node.labels) == 1
         node_dict['_label'] = list(node.labels)[0]
         return node_dict
-        
-
-class HappeningCollection(object):
-    
-    def __init__(self, graph, repo, timeline):
-        self._graph = graph
-        self._timeline = timeline
-        self._repo = repo
-
-    def iter_all():
-        pass
-
-    def get():
-        pass
-        #dct = self.get_joined('')
-
-    def iter_timespan():
-        pass
-
-    def create(self, start, stop, props):
-        happ_node = self._create_entity('Happening', props)
-        return self._node_to_dict(happ_node)
 
 class EntityCollection(object):
 
@@ -418,6 +396,54 @@ class WorkCollection(EntityCollection):
                      'links': ['name', 'url'],
                      'artist': ['slug', ('_label', 'Artist')]}
         cls._validate(mandatory, **kwargs)
+
+class HappeningCollection(EntityCollection):
+    
+    def __init__(self, neorepo, timeline):
+        super().__init__(neorepo, 'Happening')
+        self._timeline = timeline
+        self.RELS.update({'location': ('HAPPENS_AT', True)})
+        self.RELS.update({'artists': ('HOSTS', False)})
+        self.RELS.update({'time': ('ACTIVE_DURING', False)})
+
+    def get(self, slug, joins=['links', 'artists', 'location']):
+        return super().get(slug, joins)
+
+    def create(self, start, stop, props, location, artists, links):
+        try:
+            self.validate(props=props, artists=artists, location=location, links=links)
+            
+            happ_node = self._init_entity(props, links)
+
+            artist_nodes = [self._repo._get('Artist', a['slug']) for a in artists]
+            artist_rel_label = self.RELS['artists'][0]
+            artist_rels = [Relationship(happ_node, artist_rel_label, a_n) for a_n in artist_nodes]
+
+            location_node = self._repo._get('Location', location['slug'])
+            location_rel_label = self.RELS['location'][0]
+            location_rel = Relationship(happ_node, location_rel_label, location_node)
+
+            timespan_node = self._timeline.create_timespan(start, stop)
+            timespan_rel_label = self.RELS['time'][0]
+            timespan_rel = Relationship(happ_node, timespan_rel_label, timespan_node)
+
+            new_entries = artist_rels + [location_rel] + [timespan_rel]
+            self._graph.create(*new_entries)
+
+            # = self._repo._create_connection(happ_node, rel_label, artist_node)
+
+            return self.get(happ_node.properties['slug'])
+        except:
+            raise
+
+    @classmethod
+    def validate(cls, **kwargs):
+        mandatory = {'props': ['name'],
+                     'links': ['name', 'url'],
+                     'location': ['slug', ('_label', 'Location')],
+                     'artists': ['slug', ('_label', 'Artist')]}
+        cls._validate(mandatory, **kwargs)
+
     
 class Timeline(object):
 
@@ -472,6 +498,7 @@ class Timeline(object):
         self._extend_timeline(start, stop)
         start_string, stop_string = self._dt_to_str(start), self._dt_to_str(stop)
         timespan_node = Node('Timespan', start=start_string, stop=stop_string)
+        self._graph.create(timespan_node)
         self._connect_timespan(timespan_node, start, stop)
         self._graph.create(timespan_node)
 
