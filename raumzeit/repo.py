@@ -233,13 +233,6 @@ class NeoRepository(Repository):
             props['slug'] = cls.slugify(props['name'], props)
         return props
 
-
-
-    def get_or_create(self, label, props):
-        """ Get or create a value node. """
-        pass
-        
-
     @classmethod
     def _record_to_dict(cls, record):
         """ Casts a cypher record into a dict.
@@ -287,18 +280,6 @@ class HappeningCollection(object):
         happ_node = self._create_entity('Happening', props)
         return self._node_to_dict(happ_node)
 
-
-class WorkCollection(object):
-
-    def iter_all():
-        pass
-
-    def get():
-        pass
-
-    def create():
-        pass
-
 class EntityCollection(object):
 
     # resolves the field names to graph details
@@ -333,13 +314,22 @@ class EntityCollection(object):
 
         def validate_dict(mandatory, dct):
             for item in mandatory:
-                if item not in dct:
-                    raise ValueError("Couldn't validate: No key: {k}".format(k=item))
+                if isinstance(item, tuple):
+                    key = item[0]
+                    value = item[1]
+                else:
+                    key = item
+                    value = None
+                if key not in dct:
+                    raise ValueError("Couldn't validate: No key: {k}".format(k=key))
+                if value is not None:
+                    if dct[key] != value:
+                        raise ValueError("Couldn't validate: Key {k} should be {v}".format(k=key, v=value))
 
         def validate_group(mandatory, group):
             if isinstance(group, list):
                 dicts = group
-            elif isinstance(group, dict):
+            else:
                 dicts = [group]
             for dct in dicts:
                 validate_dict(mandatory, dct)
@@ -361,7 +351,7 @@ class LocationCollection(EntityCollection):
     def get(self, slug, joins=['address', 'links']):
         return super().get(slug, joins)
 
-    def create(self, props, address, links=None):
+    def create(self, props, address, links):
     
         try:
             self.validate(props=props, address=address, links=links)        
@@ -388,7 +378,7 @@ class ArtistCollection(EntityCollection):
     def get(self, slug, joins=['links']):
         return super().get(slug, joins)
 
-    def create(self, props, links=None):
+    def create(self, props, links):
         try:
             self.validate(props=props, links=links)
             artist_node = self._init_entity(props, links)
@@ -400,6 +390,33 @@ class ArtistCollection(EntityCollection):
     def validate(cls, **kwargs):
         mandatory = {'props': ['name'],
                      'links': ['name', 'url']}
+        cls._validate(mandatory, **kwargs)
+
+class WorkCollection(EntityCollection):
+
+    def __init__(self, neorepo):
+        super().__init__(neorepo, 'Work')
+        self.RELS.update({'artist': ('MADE_BY', True)})
+
+    def get(self, slug, joins=['links', 'artist']):
+        return super().get(slug, joins)
+
+    def create(self, props, artist, links):
+        try:
+            self.validate(props=props, artist=artist, links=links)
+            work_node = self._init_entity(props, links)
+            artist_node = self._repo._get('Artist', artist['slug'])
+            rel_label = self.RELS['artist'][0]
+            rel = self._repo._create_connection(work_node, rel_label, artist_node)
+            return self._repo.return_joined(work_node, artist_node, 'artist', True)
+        except:
+            raise
+
+    @classmethod
+    def validate(cls, **kwargs):
+        mandatory = {'props': ['name'],
+                     'links': ['name', 'url'],
+                     'artist': ['slug', ('_label', 'Artist')]}
         cls._validate(mandatory, **kwargs)
     
 class Timeline(object):
