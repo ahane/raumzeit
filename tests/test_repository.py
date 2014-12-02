@@ -3,14 +3,14 @@ from .util import clear_db, is_same_graph, graph
 import py2neo
 import pytest
 
-def test_db_testing():
+def test_db_testing(graph):
     clear_db()
     create_q = "CREATE (one:Person {name:'One'})-[:FRIEND_OF]->(two:Person {name:'Two'})"
     graph.cypher.execute(create_q)
     assert is_same_graph(create_q)
 
 
-def test_repo_signatures():
+def test_repo_signatures(graph):
     r = Repository()
     
     with pytest.raises(NotImplementedError):
@@ -29,7 +29,7 @@ def test_repo_signatures():
         r.create('Location', name='renate')
     
 
-def test_casts():
+def test_casts(graph):
     
     node = py2neo.Node('LableA', prop_a=1, prop_b='foo')
     node_dict = NeoRepository._node_to_dict(node)
@@ -52,7 +52,7 @@ def test_casts():
 
 
 
-def test_iter_all():
+def test_iter_all(graph):
     clear_db()
 
     
@@ -70,7 +70,7 @@ def test_iter_all():
         assert each['_label'] == 'Location'
 
 
-def test_get_one():
+def test_get_one(graph):
     clear_db()
 
     graph.cypher.execute("""CREATE (n: Location {name: 'renate'})""")
@@ -90,7 +90,7 @@ def test_get_one():
     #one_again = repo.get_one('Location', \)
 
 
-def test_get():
+def test_get(graph):
     clear_db()
 
     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
@@ -102,7 +102,7 @@ def test_get():
 
     assert created == fetched
 
-def test_url_get():
+def test_url_get(graph):
     clear_db()
 
     graph.cypher.execute("""CREATE CONSTRAINT ON (n:URI) ASSERT n.url is UNIQUE""")
@@ -120,7 +120,7 @@ def test_url_get():
 
 
 
-def test_generate_slug():
+def test_generate_slug(graph):
     names = ['Kater Holzig', 'Möp']
     slugs = [NeoRepository.slugify(n) for n in names]
     assert slugs == ['kater-holzig', 'mop']
@@ -129,7 +129,7 @@ def test_generate_slug():
     slug = Repository.slugify('Kater Holzig', props)
     assert slug == 'kater-holzig-9b04172633'
 
-def test_create_node():
+def test_create_node(graph):
     clear_db()
     repo = NeoRepository(graph)
     props = {'desc': 'Some Text', 'foo': 'bar'}
@@ -139,7 +139,7 @@ def test_create_node():
     assert list(created_node.labels)[0] == 'Foobar'
     assert created_node.bound
 
-def test_create_entity():
+def test_create_entity(graph):
     clear_db()
     graph.cypher.execute("""CREATE CONSTRAINT ON (n:Location) ASSERT n.slug IS UNIQUE""")
     repo = NeoRepository(graph)
@@ -153,11 +153,28 @@ def test_create_entity():
     assert len(labels) == 1
     assert labels[0] == 'Location'
 
+    should_state = """CREATE (a:Location {name: 'Kater Holzig', desc: 'Some Text', slug: 'kater-holzig'})"""
+    assert is_same_graph(should_state)
     # check slug handling for duplicate names
     created_entity_b = repo._create_entity('Location', props)
     assert created_entity_b['slug'] == 'kater-holzig-9b04172633'
 
-def test_create_connection():
+def test_create_entity_with_links(graph):
+    clear_db()
+    repo = NeoRepository(graph)
+    props = {'name': 'Kater Holzig'}
+    links = {'SomeRel': 'http://someurl.com', 'OtherRel': 'http://otherurl.com'}
+    repo._create_entity('Location', props, links)
+
+
+    should_state = """CREATE (o: URI {name: 'SomeRel', url: 'http://someurl.com'})
+                        <-[:IDENTIFIED_BY]-
+                        (n: Location {name: 'Kater Holzig', slug: 'kater-holzig'})
+                        -[:IDENTIFIED_BY]->
+                        (m: URI {name: 'OtherRel', url: 'http://otherurl.com'})"""
+    assert is_same_graph(should_state)
+
+def test_create_connection(graph):
     clear_db()
     repo = NeoRepository(graph)
 
@@ -180,7 +197,7 @@ def test_create_connection():
     
     assert is_same_graph(should_state)
 
-def test_connection_happening_location():
+def test_connection_happening_location(graph):
     clear_db()
     repo = NeoRepository(graph)
 
@@ -202,7 +219,7 @@ def test_connection_happening_location():
     assert with_child['slug'] == 'foo-party'
     assert with_child['location'][0]['slug'] == 'kater-holzig'
 
-def test_connection_happening_artists():
+def test_connection_happening_artists(graph):
     clear_db()
     repo = NeoRepository(graph)
     event_props = {'name': 'foo party', }
@@ -217,7 +234,7 @@ def test_connection_happening_artists():
                        (b:Artist {name:'DJ1', slug: 'dj1'})"""
     assert is_same_graph(should_state_artist)
 
-def test_get_joined():
+def test_get_joined(graph):
     clear_db()
 
     repo = NeoRepository(graph)
@@ -239,12 +256,12 @@ def test_get_joined():
                        (b:Artist {name:'DJ2', slug: 'dj2'})""")
 
 
-    joined_loc = repo.get_joined('Happening', 'foo-party', 'location')
+    joined_loc = repo.get_joined('Happening', 'foo-party', 'HAPPENS_AT', 'location')
     assert joined_loc['slug'] =='foo-party'
     assert len(joined_loc['location']) == 1
     assert joined_loc['location'][0]['slug'] == 'kater-holzig'
 
-    joined_art = repo.get_joined('Happening', 'foo-party', 'artists')
+    joined_art = repo.get_joined('Happening', 'foo-party', 'HOSTS', 'artists')
     assert joined_loc['slug'] =='foo-party'
     assert len(joined_art['artists'])  == 2
     artist_slugs = set([a['slug'] for a in joined_art['artists']])
@@ -254,7 +271,7 @@ def test_get_joined():
     # Next up!
     #joined_both = repo.get_joined('Happening', 'foo-party', 'artists', 'location')
     
-def test_return_joined():
+def test_return_joined(graph):
     parent_node = py2neo.Node('LableA', prop_a=1, prop_b='foo')
     child_node_a = py2neo.Node('LableB', prop_a=2, prop_b='bar')
     child_node_b = py2neo.Node('LableB', prop_a=3, prop_b='baz')

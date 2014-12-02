@@ -103,17 +103,29 @@ class NeoRepository(Repository):
         rel = self._graph.match_one(None, 'IDENTIFIED_BY', url_node)
         return rel.start_node
 
-    def get_joined(self, label, slug, rel_attr):
+    def get_joined(self, label, slug, rel_label, rel_attr, single_child=False):
         """ Returns an entity dict with another entity embedded in it """
         
-        rel_label = self.ATTR_TO_REL[rel_attr]
+        #old style get_joined fix tests
+        #rel_label = self.ATTR_TO_REL[rel_attr]
         start_node = self._get(label, slug)
         nodes = self._get_joined(start_node, rel_label)
 
         parent_node = nodes[0][0]
         child_nodes = [child for par, child in nodes]
         
-        return self._return_joined(parent_node, child_nodes, rel_label)
+        return self.return_joined(parent_node, child_nodes, rel_attr, single_child)
+
+    def _get_joined(self, start_node, rel_label):
+        
+        rels = list(self._graph.match(start_node, rel_label, bidirectional=True))
+        if len(rels) == 0:
+            raise KeyError('Node {s} doesnt have rel {rel}'.format(s=start_node, rel=rel_label))
+        #handle bidirectionality
+        if start_node == rels[0].start_node:
+            return [(start_node, rel.end_node) for rel in rels]
+        else:
+            return [(start_node, rel.start_node) for rel in rels]
 
     def _return_joined(self, parent_node, child_nodes, rel_label):
 
@@ -144,26 +156,12 @@ class NeoRepository(Repository):
         parent_dict[rel_attr] = child_dict
         return parent_dict
 
-    def _get_joined(self, start_node, rel_label):
-        
-        rels = list(self._graph.match(start_node, rel_label, bidirectional=True))
-        
-        #handle bidirectionality
-        if start_node == rels[0].start_node:
-            return [(start_node, rel.end_node) for rel in rels]
-        else:
-            return [(start_node, rel.start_node) for rel in rels]
-
-#    def iter_joined(self, label, slug, *rel_attrs):
-#        rel_labels = [self.ATTR_TO_REL[a] for a in rel_attrs]
-
-
-
+    
     def create(self, label, props, **kwargs):
         """ Create a new sluggable entity """
         return self._node_to_dict(self._create_entity(label, props))
         
-    def _create_entity(self, label, props):
+    def _create_entity(self, label, props, links=None):
         """ Create a new sluggable entity. Must have a 'name' property. """
         entity_dct = self._with_slug(props)
         try:           
@@ -176,7 +174,23 @@ class NeoRepository(Repository):
             else:
                 raise exc
 
+        finally:
+            if links is not None:
+                self._create_uris(node, links)
         return node
+
+    def _create_uris(self, entity_node, url_dicts):
+        """ Adds URI nodes to an entity node.
+            url_dict should resolve from names to urls """
+        new_entries = []
+        for dct in url_dicts:
+            uri_node = Node('URI', name=dct['name'], url=dct['url'])
+            rel = Relationship(entity_node, 'IDENTIFIED_BY', uri_node)
+            new_entries.extend([uri_node, rel])
+
+        self._graph.create(*new_entries)
+
+
 
     def _create_node(self, label, props):
         """ Create a new node. """
@@ -264,6 +278,7 @@ class HappeningCollection(object):
 
     def get():
         pass
+        #dct = self.get_joined('')
 
     def iter_timespan():
         pass
@@ -271,21 +286,6 @@ class HappeningCollection(object):
     def create(self, start, stop, props):
         happ_node = self._create_entity('Happening', props)
         return self._node_to_dict(happ_node)
-
-
-class ArtistCollection(object):
-    
-    def iter_all():
-        pass
-
-    def get():
-        pass
-
-    def iter_timespan():
-        pass
-
-    def create():
-        pass
 
 
 class WorkCollection(object):
@@ -299,48 +299,108 @@ class WorkCollection(object):
     def create():
         pass
 
+class EntityCollection(object):
 
-class LocationCollection(object):
+    # resolves the field names to graph details
+    # first entry in tuple it relationship label name
+    # second entry in tuple is wether to expect one (True) or multiple (False)        
+    RELS = {'links': ('IDENTIFIED_BY', False)}
 
-    def __init__(self, neorepo):
+    def __init__(self, neorepo, label):
+        self.label = label
         self._repo = neorepo
         self._graph = neorepo._graph
 
-    def iter_all():
-        pass
+    def get(self, slug, joins):
+        dct = {}
+        for attr in joins:
+            rel_label = self.RELS[attr][0]
+            single_child = self.RELS[attr][1]
+            joined_dct = self._repo.get_joined(self.label, slug, rel_label, attr, single_child)
+            dct.update(joined_dct)
+        return dct
 
-    def get():
-        pass
+    def url_get(self, url):
+        dct = self._repo.url_get(url)
+        return self.get(dct['slug'])
 
-    def create(self, props, address):
+    def _init_entity(self, props, links=None):
+        node = self._repo._create_entity(self.label, props, links)
+        return node
+
+    @classmethod
+    def _validate(cls, mandatory, **kwargs):
+
+        def validate_dict(mandatory, dct):
+            for item in mandatory:
+                if item not in dct:
+                    raise ValueError("Couldn't validate: No key: {k}".format(k=item))
+
+        def validate_group(mandatory, group):
+            if isinstance(group, list):
+                dicts = group
+            elif isinstance(group, dict):
+                dicts = [group]
+            for dct in dicts:
+                validate_dict(mandatory, dct)
+        
+        for group_name, group in kwargs.items():
+            if group_name in mandatory:
+                validate_group(mandatory[group_name], group)
+            else:
+                raise ValueError("Couldn't validate: No group {g}".format(g=group))
+
+
+class LocationCollection(EntityCollection):
+
+    def __init__(self, neorepo):
+        super().__init__(neorepo, 'Location')
+
+        self.RELS.update({'address': ('LOCATED_AT', True)})
+
+    def get(self, slug, joins=['address', 'links']):
+        return super().get(slug, joins)
+
+    def create(self, props, address, links=None):
     
         try:
-            self._validate(props, address)        
-            loc_node = self._repo._create_entity('Location', props)
+            self.validate(props=props, address=address, links=links)        
+            loc_node = self._init_entity(props, links)
             addr_node = self._repo._create_node('Address', address)
-            rel = self._repo._create_connection(loc_node, 'LOCATED_AT', addr_node)
+            rel_label = self.RELS['address'][0]
+            rel = self._repo._create_connection(loc_node, rel_label, addr_node)
             return self._repo.return_joined(loc_node, addr_node, 'address', True)
         
         except ValueError:
             raise
 
     @classmethod
-    def _validate(cls, props, address):
-        def validate(key, dct):
-            if key in dct:
-                pass
-            else:
-                raise ValueError("Couldn't find key: {k}".format(k=key))
+    def validate(cls, **kwargs):
+        mandatory = {'props': ['name'],
+                     'address': ['lat', 'lon', 'string'],
+                     'links': ['name', 'url']}
+        cls._validate(mandatory, **kwargs)
 
-        mandatory_props = {'name'}
-        for key in mandatory_props:
-            validate(key, props)
+class ArtistCollection(EntityCollection):
+    def __init__(self, neorepo):
+        super().__init__(neorepo, 'Artist')
 
-        mandatory_addr = {'lat', 'lon', 'string'}
-        for key in mandatory_addr:
-            validate(key, address)
+    def get(self, slug, joins=['links']):
+        return super().get(slug, joins)
 
+    def create(self, props, links=None):
+        try:
+            self.validate(props=props, links=links)
+            artist_node = self._init_entity(props, links)
+            return self._repo._node_to_dict(artist_node)
+        except:
+            raise
 
+    @classmethod
+    def validate(cls, **kwargs):
+        mandatory = {'props': ['name'],
+                     'links': ['name', 'url']}
+        cls._validate(mandatory, **kwargs)
     
 class Timeline(object):
 
