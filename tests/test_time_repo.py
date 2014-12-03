@@ -113,10 +113,6 @@ def test_prepend_hours(graph):
 		     -[:NEXT]->(o: Hour {start: '2014-01-01T12:00:00'})<-[:LATEST]-(i)"""
 	assert is_same_graph(target)
 
-
-
-
-
 def test_hour_range(graph):
 
 	target_range = [datetime(2014, 1, 1, 12), datetime(2014, 1, 1, 13), datetime(2014, 1, 1, 14)]
@@ -155,17 +151,15 @@ def test_create_timespan_cold(graph):
 	target_tl = """CREATE (i: HourIndex) MERGE (n: Hour {start: '2014-01-01T18:00:00'})
 						 -[:NEXT]->(m: Hour {start: '2014-01-01T19:00:00'})
 	 				     -[:NEXT]->(o: Hour {start: '2014-01-01T20:00:00'})<-[:LATEST]-(i)"""
+	
 	assert has_sub_graph(target_tl)
-	target_ts_a = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
-			  -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T18:00:00'})"""
-	target_ts_b = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
-				  -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T19:00:00'})"""
-	target_ts_c = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
-				  -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T20:00:00'})"""
+	target_ts = """CREATE (t: Timespan {start: '2014-01-01T18:30:00', stop: '2014-01-01T20:10:00'})
+			      -[:OVERLAPS]-> (n: Hour {start: '2014-01-01T18:00:00'})
+					MERGE (m: Hour {start: '2014-01-01T20:00:00'})<-[:OVERLAPS]-
+					(t)-[:OVERLAPS]->(o: Hour {start: '2014-01-01T19:00:00'})"""
 
-	assert has_sub_graph(target_ts_a)
-	assert has_sub_graph(target_ts_b)
-	assert has_sub_graph(target_ts_c)
+	assert has_sub_graph(target_ts)
+
 
 def test_create_timespan_warm_after(graph):
 	clear_db()
@@ -293,3 +287,25 @@ def test_create_timespan_warm_after_overlapping(graph):
 
 	assert has_sub_graph(target_ts_a)
 	assert has_sub_graph(target_ts_b)
+
+
+def test_compile_timeframe_params(graph):
+	clear_db()
+	graph.cypher.execute("""CREATE (i: HourIndex)
+						 -[:EARLIEST]->(n: Hour {start: '2014-01-01T18:00:00'})
+						 -[:NEXT]->(m: Hour {start: '2014-01-01T19:00:00'})
+	 				     -[:NEXT]->(o: Hour {start: '2014-01-01T20:00:00'})
+	 				     <-[:LATEST]-(i)""")
+	tl = Timeline(graph)
+
+	params = tl._compile_timeframe_params(datetime(2014, 1, 1, 15), datetime(2014, 1, 1, 21))
+	assert params == {'start': '2014-01-01T18:00:00', 'stop': '2014-01-01T20:00:00'}
+
+def test_multiple_timespans(graph):
+	clear_db()
+	tl = Timeline(graph)
+
+	tl.create_timespan(datetime(2014, 1, 1, 19, 30), datetime(2014, 1, 1, 22, 10))
+	tl.create_timespan(datetime(2014, 1, 1, 20, 30), datetime(2014, 1, 1, 21, 10))
+	tl.create_timespan(datetime(2014, 1, 1, 21, 30), datetime(2014, 1, 2, 1, 10))
+

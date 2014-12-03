@@ -40,17 +40,22 @@ def test_casts(graph):
     assert node_dict['prop_b'] == 'foo'
 
 
-    rec_producer = py2neo.cypher.RecordProducer(['col_a', 'col_b'])
-    record = rec_producer.produce(['bar', node])
+    rec_producer = py2neo.cypher.RecordProducer(['col_a', 'col_b', 'sub_'])
+    record = rec_producer.produce(['bar', node, node])
     rec_dict = NeoRepository._record_to_dict(record)
 
-    assert len(rec_dict) == 4
+    assert len(rec_dict) == 5
     assert rec_dict['col_a'] == 'bar'
     assert rec_dict['_label'] == 'LableA'
     assert rec_dict['prop_a'] == 1
     assert rec_dict['prop_b'] == 'foo'
+    assert rec_dict['sub']['prop_a'] == 1
 
 
+
+def test_subgraph_to_collection(graph):
+    clear_db()
+    graph.cypher.execute("""""")
 
 def test_iter_all(graph):
     clear_db()

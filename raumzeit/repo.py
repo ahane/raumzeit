@@ -117,6 +117,7 @@ class NeoRepository(Repository):
         return self.return_joined(parent_node, child_nodes, rel_attr, single_child)
 
     def _get_joined(self, start_node, rel_label):
+        """Moved"""
         
         rels = list(self._graph.match(start_node, rel_label, bidirectional=True))
         if len(rels) == 0:
@@ -242,10 +243,17 @@ class NeoRepository(Repository):
         """
         record_dict = {}
         for key, value in record.__dict__.items():
-            if isinstance(value, py2neo.Node):
+            is_node = isinstance(value, py2neo.Node)
+            trailing_underscore = (key[-1] == '_')
+            
+            if is_node and not trailing_underscore:
                 node_dict = cls._node_to_dict(value)
                 record_dict.update(node_dict)
 
+            elif is_node and trailing_underscore:
+                sub_node_dict = cls._node_to_dict(value)
+                sub_key = key[:-1]
+                record_dict[sub_key] = sub_node_dict
             else:
                 record_dict[key] = value
         return record_dict
@@ -280,8 +288,7 @@ class EntityCollection(object):
         return dct
 
     def url_get(self, url):
-        dct = self._repo.url_get(url)
-        return self.get(dct['slug'])
+        return self._repo.url_get(url)
 
     def _init_entity(self, props, links=None):
         node = self._repo._create_entity(self.label, props, links)
@@ -386,7 +393,7 @@ class WorkCollection(EntityCollection):
             artist_node = self._repo._get('Artist', artist['slug'])
             rel_label = self.RELS['artist'][0]
             rel = self._repo._create_connection(work_node, rel_label, artist_node)
-            return self._repo.return_joined(work_node, artist_node, 'artist', True)
+            return self._repo.return_joined(work_node, artist_node, 'artist', self.RELS['artist'][1])
         except:
             raise
 
@@ -404,9 +411,9 @@ class HappeningCollection(EntityCollection):
         self._timeline = timeline
         self.RELS.update({'location': ('HAPPENS_AT', True)})
         self.RELS.update({'artists': ('HOSTS', False)})
-        self.RELS.update({'time': ('ACTIVE_DURING', False)})
+        self.RELS.update({'time': ('ACTIVE_DURING', True)})
 
-    def get(self, slug, joins=['links', 'artists', 'location']):
+    def get(self, slug, joins=['links', 'artists', 'location', 'time']):
         return super().get(slug, joins)
 
     def create(self, start, stop, props, location, artists, links):
@@ -430,11 +437,25 @@ class HappeningCollection(EntityCollection):
             new_entries = artist_rels + [location_rel] + [timespan_rel]
             self._graph.create(*new_entries)
 
-            # = self._repo._create_connection(happ_node, rel_label, artist_node)
-
             return self.get(happ_node.properties['slug'])
+
         except:
             raise
+
+
+    def iter_timeframe(self, start, stop):
+        params = self._timeline.compile_timeframe_params(start, stop)
+        happenings_iter = self._graph.cypher.stream(
+            """MATCH
+                (h1: Hour {start: {start}}),
+                (h2: Hour {start: {stop}}),
+                active = (h1)-[:NEXT*0..]->(h: Hour)-[:NEXT*0..]->h2,
+                happs = (h)<-[:OVERLAPS]-(t: Timespan)<-[:ACTIVE_DURING]-(happ: Happening),
+                happs_ext = (happ)-[:HAPPENS_AT]->(loc)
+                RETURN DISTINCT happ, t as time_, loc as location_
+            """, parameters = params)
+        for record in happenings_iter:
+            yield self._repo._record_to_dict(record)
 
     @classmethod
     def validate(cls, **kwargs):
@@ -482,6 +503,24 @@ class Timeline(object):
         else:
             return earliest_rel.end_node
     
+    def compile_timeframe_params(self, start, stop):
+        """ Compiles a dictionary used in a start-stop timeframe query.
+            Makes sure the params are within range of the timeline. """
+        start = self._floor_dt(start)
+        stop = self._floor_dt(stop)
+        
+        earliest = self._str_to_dt(self.earliest.properties['start'])
+        latest = self._str_to_dt(self.latest.properties['start'])
+
+        if start < earliest:
+            start = earliest
+        if stop > latest:
+            stop = latest
+
+        start_str, stop_str = start.isoformat(), stop.isoformat()
+        return {'start': start_str, 'stop': stop_str}
+
+
     def _init_hour(self, hour_datetime):
         
         floored = self._floor_dt(hour_datetime)
@@ -491,6 +530,9 @@ class Timeline(object):
         self._set_latest(hour_node)
         self._set_earliest(hour_node)
         return hour_node
+
+    def iter_timeframe(self, start, stop, node_label):
+        pass
 
     def create_timespan(self, start, stop):
         """ Create a timespan node and connect it to the hours on the timeline it overlaps. """
